@@ -1,4 +1,4 @@
-### SVJ HERE HELLO - This is new release V2.0 ###
+### SVJ HERE HELLO - This is Third release V3.0  ###
 
 import RPi.GPIO as GPIO
 import time
