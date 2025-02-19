@@ -1,4 +1,4 @@
-### SVJ HERE HELLO - This is fifth final trial release V5.0  ###
+### SVJ HERE HELLO - hello, Uploading V6 finalllly   ###
 
 import RPi.GPIO as GPIO
 import time
