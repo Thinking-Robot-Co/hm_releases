@@ -1,4 +1,4 @@
-### SVJ HERE HELLO - hello, Uploading V6 finalllly   ###
+### SVJ HERE HELLO - Hello, Doing 7th version now   ###
 
 import RPi.GPIO as GPIO
 import time
