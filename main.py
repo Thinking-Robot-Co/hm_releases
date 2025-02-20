@@ -12,7 +12,7 @@ import datetime
 
 # GPIO Setup
 
-IND_LED_PIN = 24
+IND_LED_PIN = 25
 
 
 VDO_BTN_PIN = 17
