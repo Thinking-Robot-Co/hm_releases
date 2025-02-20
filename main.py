@@ -11,6 +11,7 @@ from libcamera import Transform
 import datetime
 
 # GPIO Setup
+time.sleep(3)  # Wait for system to stabilize
 
 IND_LED_PIN = 25
 
@@ -25,7 +26,7 @@ GPIO.setup(IND_LED_PIN, GPIO.OUT)
 
 # Picamera Setup
 picam2 = Picamera2()
-picam2.start_preview(Preview.QTGL, transform=Transform(vflip=True))
+picam2.start_preview(Preview.NULL, transform=Transform(vflip=True))
 
 # API Upload Info
 UPLOAD_URL = "https://centrix.co.in/v_api/upload"
