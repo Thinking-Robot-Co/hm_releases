@@ -11,12 +11,17 @@ from libcamera import Transform
 import datetime
 
 # GPIO Setup
-BTN_PIN = 17
-LED_PIN = 27
+
+IND_LED_PIN = 24
+
+
+VDO_BTN_PIN = 17
+VDO_LED_PIN = 23
 
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(BTN_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-GPIO.setup(LED_PIN, GPIO.OUT)
+GPIO.setup(VDO_BTN_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+GPIO.setup(VDO_LED_PIN, GPIO.OUT)
+GPIO.setup(IND_LED_PIN, GPIO.OUT)
 
 # Picamera Setup
 picam2 = Picamera2()
@@ -104,13 +109,13 @@ def retry_failed_uploads():
             print(f"Retrying upload for {failed_path}")
 
             if upload_video(failed_path):
-                if os.path.exists(failed_path):  # ✅ Check before deleting
+                if os.path.exists(failed_path):  # âœ… Check before deleting
                     os.remove(failed_path)
                     print(f"Successfully uploaded & deleted: {failed_path}")
             else:
                 print(f"Still failed, keeping in folder: {failed_path}")
     else:
-        print("✅No failed videos to retry.")
+        print("âœ…No failed videos to retry.")
 
 
 
@@ -143,7 +148,7 @@ def upload_video(file_path):
 
 
 
-def check_video_size():
+def check_video_size(session_no):
     """Runs in a separate thread to check if the video has reached 10MB."""
     global recording, num, stop_thread
     while recording and not stop_thread:
@@ -153,7 +158,7 @@ def check_video_size():
             time.sleep(0.5)  # Small delay before restarting
 
             num += 1  # Increment video number
-            new_video_file = get_video_filename()
+            new_video_file = get_video_filename(session_no, num)  # Fix here
             print(f"Starting new recording: {new_video_file}")
             video_files.append(new_video_file)
             picam2.start_and_record_video(new_video_file, duration=None)
@@ -162,16 +167,18 @@ def check_video_size():
 
 
 try:
+    GPIO.output(IND_LED_PIN, GPIO.HIGH)
+
     print("Press the button to start recording...")
     while True:
-        button_state = GPIO.input(BTN_PIN)
+        button_state = GPIO.input(VDO_BTN_PIN)
         if button_state == GPIO.LOW:
             time.sleep(0.2)  # Debounce delay
 
             if not recording:
                 session_no = 1  # You can increment this per session if needed
                 video_file = get_video_filename(session_no, num)  # Pass session & vdo number
-                GPIO.output(LED_PIN, GPIO.HIGH)
+                GPIO.output(VDO_LED_PIN, GPIO.HIGH)
                 video_files.append(video_file)
                 picam2.start_and_record_video(video_file, duration=None)
                 recording = True
@@ -179,8 +186,9 @@ try:
                 stop_thread = False  # Allow the thread to run
 
                 # Start a new thread for file size checking
-                split_thread = threading.Thread(target=check_video_size)
+                split_thread = threading.Thread(target=check_video_size, args=(session_no,))
                 split_thread.start()
+
 
             else:
                 # Stop recording
@@ -189,13 +197,13 @@ try:
                 stop_thread = True
                 picam2.stop_recording()
                 picam2.stop_preview()
-                GPIO.output(LED_PIN, GPIO.LOW)
+                GPIO.output(VDO_LED_PIN, GPIO.LOW)
                 time.sleep(1)  # Prevent accidental double press
 
-                # 🔄 First, try to upload previously failed videos
+                # ðŸ”„ First, try to upload previously failed videos
                 retry_failed_uploads()
 
-                # 📤 Now upload the latest recorded videos
+                # ðŸ“¤ Now upload the latest recorded videos
                 for vdo in video_files:
                     if not upload_video(vdo):
                         failed_path = os.path.join(FAILED_DIR, os.path.basename(vdo))
@@ -207,10 +215,13 @@ try:
 
 
             # Wait until button is released
-            while GPIO.input(BTN_PIN) == GPIO.LOW:
+            while GPIO.input(VDO_BTN_PIN) == GPIO.LOW:
                 time.sleep(0.1)
 
 except KeyboardInterrupt:
+    GPIO.output(IND_LED_PIN, GPIO.LOW)
+    GPIO.output(VDO_LED_PIN, GPIO.LOW)
+
     print("Exiting...")
     GPIO.cleanup()
     picam2.close()
