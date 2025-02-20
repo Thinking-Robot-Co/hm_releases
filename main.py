@@ -9,6 +9,11 @@ import threading
 from picamera2 import Picamera2, Preview
 from libcamera import Transform
 import datetime
+import subprocess
+
+AUDIO_FILE = "audio.wav"
+VIDEO_FILE = "video.h264"
+OUTPUT_FILE = "output.mp4"
 
 # GPIO Setup
 time.sleep(3)  # Wait for system to stabilize
@@ -47,6 +52,34 @@ video_files = []
 num = 1
 prev_timestamp = None
 stop_thread = False  # Used to control the splitting thread
+
+
+"""    VIDEO AUDIO FUNCTIONS """
+def start_audio_recording():
+    """ Start recording audio using FFmpeg with USB mic """
+    global audio_process
+    audio_process = subprocess.Popen([
+        "ffmpeg", "-y", "-f", "alsa", "-i", "hw:1,0",
+        "-ac", "2", "-ar", "44100", AUDIO_FILE
+    ])
+    print("Audio recording started.")
+
+def stop_audio_recording():
+    """ Stop audio recording """
+    global audio_process
+    audio_process.terminate()
+    audio_process.wait()
+    print("Audio recording stopped.")
+
+def merge_audio_video():
+    """ Merge recorded audio and video """
+    merged_file = get_video_filename(1, num)  # Get filename format
+    subprocess.run([
+        "ffmpeg", "-y", "-i", VIDEO_FILE, "-i", AUDIO_FILE,
+        "-c:v", "copy", "-c:a", "aac", "-strict", "experimental", merged_file
+    ])
+    print(f"Merged file saved: {merged_file}")
+
 
 
 def get_timestamp():
@@ -187,6 +220,7 @@ try:
             time.sleep(0.2)  # Debounce delay
 
             if not recording:
+                start_audio_recording()
                 session_no = 1  # You can increment this per session if needed
                 video_file = get_video_filename(session_no, num)  # Pass session & vdo number
                 GPIO.output(VDO_LED_PIN, GPIO.HIGH)
@@ -206,8 +240,10 @@ try:
                 print("Stopping recording...")
                 recording = False  # This will stop the split thread
                 stop_thread = True
+                stop_audio_recording()
                 picam2.stop_recording()
                 picam2.stop_preview()
+                merge_audio_video()  # Merge video and audio
                 GPIO.output(VDO_LED_PIN, GPIO.LOW)
                 time.sleep(1)  # Prevent accidental double press
 
