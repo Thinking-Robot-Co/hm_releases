@@ -1,4 +1,4 @@
-### SVJ HERE HELLO - TRC: PDay 2 new commit for test ...   ###
+### SVJ HERE HELLO - TRC: This is new commit - latest one ...   ###
 
 import RPi.GPIO as GPIO
 import time
