@@ -1,4 +1,4 @@
-### SVJ HERE HELLO - TRC: This is new Script ... ###
+### SVJ HERE HELLO - TRC: This is new of alll ###
 
 import RPi.GPIO as GPIO
 import time
