@@ -1,4 +1,4 @@
-### SVJ HERE HELLO - Hello, Doing 8th version now   ###
+### SVJ HERE HELLO - TRC: PDay 2 new commit for test ...   ###
 
 import RPi.GPIO as GPIO
 import time
