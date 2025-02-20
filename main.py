@@ -221,6 +221,8 @@ def retry_failed_uploads():
         print("No failed videos to retry.")
 
 try:
+    GPIO.output(IND_LED_PIN, GPIO.HIGH)
+
     print("Press the button to start recording...")
     while True:
         button_state = GPIO.input(VDO_BTN_PIN)
@@ -288,6 +290,9 @@ try:
                 time.sleep(0.1)
 
 except KeyboardInterrupt:
+    GPIO.output(VDO_LED_PIN, GPIO.LOW)
+    GPIO.output(IND_LED_PIN, GPIO.LOW)
+
     print("Exiting...")
     GPIO.cleanup()
     picam2.close()
