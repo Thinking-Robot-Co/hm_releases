@@ -169,6 +169,16 @@ def check_video_size(session_no):
 
 try:
     GPIO.output(IND_LED_PIN, GPIO.HIGH)
+    time.sleep(1)
+    GPIO.output(IND_LED_PIN, GPIO.LOW)
+
+    GPIO.output(IND_LED_PIN, GPIO.HIGH)
+    time.sleep(1)
+    GPIO.output(IND_LED_PIN, GPIO.LOW)
+    GPIO.output(IND_LED_PIN, GPIO.HIGH)
+    time.sleep(1)
+    GPIO.output(IND_LED_PIN, GPIO.LOW)
+    GPIO.output(IND_LED_PIN, GPIO.HIGH)
 
     print("Press the button to start recording...")
     while True:
