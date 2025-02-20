@@ -81,6 +81,37 @@ def merge_audio_video():
     print(f"Merged file saved: {merged_file}")
 
 
+""" Checking Shutdown ... """
+def check_shutdown():
+    """Monitors if the button is held for 5 seconds to exit the script."""
+    while True:
+        button_state = GPIO.input(VDO_BTN_PIN)
+        if button_state == GPIO.LOW:  # Button pressed
+            start_time = time.time()
+            while GPIO.input(VDO_BTN_PIN) == GPIO.LOW:
+                if time.time() - start_time >= 5:  # Held for 5 seconds
+                    print("Button held for 5 seconds! Exiting program...")
+
+                    # Stop recording safely
+                    global stop_thread, recording
+                    stop_thread = True  # Stop background threads
+                    recording = False  # Ensure recording stops
+                    if 'picam2' in globals():
+                        picam2.stop_recording()
+                        picam2.stop_preview()
+
+                    GPIO.output(IND_LED_PIN, GPIO.LOW)
+                    GPIO.output(VDO_LED_PIN, GPIO.LOW)
+
+                    GPIO.cleanup()  # Proper cleanup
+                    os._exit(0)  # Exit program immediately
+
+                time.sleep(0.1)
+        time.sleep(0.1)
+
+
+shutdown_thread = threading.Thread(target=check_shutdown, daemon=True)
+shutdown_thread.start()
 
 def get_timestamp():
     """Get current timestamp formatted for filenames."""
@@ -202,16 +233,6 @@ def check_video_size(session_no):
 
 try:
     GPIO.output(IND_LED_PIN, GPIO.HIGH)
-    time.sleep(1)
-    GPIO.output(IND_LED_PIN, GPIO.LOW)
-
-    GPIO.output(IND_LED_PIN, GPIO.HIGH)
-    time.sleep(1)
-    GPIO.output(IND_LED_PIN, GPIO.LOW)
-    GPIO.output(IND_LED_PIN, GPIO.HIGH)
-    time.sleep(1)
-    GPIO.output(IND_LED_PIN, GPIO.LOW)
-    GPIO.output(IND_LED_PIN, GPIO.HIGH)
 
     print("Press the button to start recording...")
     while True:
@@ -222,23 +243,21 @@ try:
             if not recording:
                 start_audio_recording()
                 session_no = 1  # You can increment this per session if needed
-                video_file = get_video_filename(session_no, num)  # Pass session & vdo number
+                video_file = get_video_filename(session_no, num)
                 GPIO.output(VDO_LED_PIN, GPIO.HIGH)
                 video_files.append(video_file)
                 picam2.start_and_record_video(video_file, duration=None)
                 recording = True
-                num = 1  # Reset video numbering for a new session
-                stop_thread = False  # Allow the thread to run
+                num = 1  # Reset video numbering
+                stop_thread = False  # Allow background thread to run
 
                 # Start a new thread for file size checking
                 split_thread = threading.Thread(target=check_video_size, args=(session_no,))
                 split_thread.start()
 
-
             else:
-                # Stop recording
                 print("Stopping recording...")
-                recording = False  # This will stop the split thread
+                recording = False  # Stop the background thread
                 stop_thread = True
                 stop_audio_recording()
                 picam2.stop_recording()
@@ -247,28 +266,25 @@ try:
                 GPIO.output(VDO_LED_PIN, GPIO.LOW)
                 time.sleep(1)  # Prevent accidental double press
 
-                # ðŸ”„ First, try to upload previously failed videos
-                retry_failed_uploads()
+                retry_failed_uploads()  # Try to upload previous failed videos
 
-                # ðŸ“¤ Now upload the latest recorded videos
                 for vdo in video_files:
                     if not upload_video(vdo):
                         failed_path = os.path.join(FAILED_DIR, os.path.basename(vdo))
                         shutil.move(vdo, failed_path)
                         print(f"Moved to failed uploads: {failed_path}")
 
-                # Clear the list after upload attempt
                 video_files.clear()
 
-
-            # Wait until button is released
             while GPIO.input(VDO_BTN_PIN) == GPIO.LOW:
                 time.sleep(0.1)
 
 except KeyboardInterrupt:
+    print("Keyboard Interrupt - Exiting...")
+finally:
     GPIO.output(IND_LED_PIN, GPIO.LOW)
     GPIO.output(VDO_LED_PIN, GPIO.LOW)
-
-    print("Exiting...")
     GPIO.cleanup()
-    picam2.close()
+    if 'picam2' in globals():
+        picam2.stop_recording()
+        picam2.stop_preview()
