@@ -2,7 +2,7 @@
 # General script for - Audio + video with failed to upload - with repeat upload#
 # need to add 1.move to master folder   2.delet properly
 
-# HEEEEEEERRRRRRRR IS THE NEEEEEW CODDDDDEEEEE
+# AAAAAAAA BBBBBBBB CCCCCCCC DDDDDDDD #
 
 import RPi.GPIO as GPIO
 import time
