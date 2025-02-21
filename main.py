@@ -2,7 +2,7 @@
 # General script for - Audio + video with failed to upload - with repeat upload#
 # need to add 1.move to master folder   2.delet properly
 
-# This is new of all setup OKKK
+# $$$$$ $$$$$
 
 import RPi.GPIO as GPIO
 import time
@@ -228,8 +228,8 @@ def retry_failed_uploads():
 try:
     GPIO.output(IND_LED_PIN, GPIO.HIGH)
 
-    print("Press the button to start recording...")
     while True:
+        print("Press the button to start recording...")
         button_state = GPIO.input(VDO_BTN_PIN)
         if button_state == GPIO.LOW:
             time.sleep(0.2)  # Debounce delay
