@@ -70,15 +70,16 @@ RESOLUTIONS = [
     ("2592x1944", 2592, 1944),  # 5MP for some sensors
 ]
 
+
 def record_audio(audio_filename, stop_event):
     """Continuously record audio until stop_event is set."""
     p = pyaudio.PyAudio()
-    stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE,
-                    input=True, frames_per_buffer=CHUNK)
+    stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100,
+                    input=True, frames_per_buffer=1024)
     frames = []
     while not stop_event.is_set():
         try:
-            data = stream.read(CHUNK, exception_on_overflow=False)
+            data = stream.read(1024, exception_on_overflow=False)
         except Exception as e:
             print("Audio read error:", e)
             continue
@@ -88,11 +89,12 @@ def record_audio(audio_filename, stop_event):
     p.terminate()
 
     wf = wave.open(audio_filename, 'wb')
-    wf.setnchannels(CHANNELS)
-    wf.setsampwidth(p.get_sample_size(FORMAT))
-    wf.setframerate(RATE)
+    wf.setnchannels(1)
+    wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
+    wf.setframerate(44100)
     wf.writeframes(b''.join(frames))
     wf.close()
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -230,10 +232,10 @@ class MainWindow(QMainWindow):
         if was_running:
             self.picam2.stop()
 
-        # --- Modification 1: Unmirror by not applying any flip transformation ---
+        # Modified to remove mirroring by not flipping the image
         config = self.picam2.create_preview_configuration(
             main={"size": (self.current_width, self.current_height)},
-            transform=Transform()  # No vflip/hflip; shows original image
+            transform=Transform()  # Removed vflip to unmirror the preview
         )
         config["controls"]["FrameDurationLimits"] = (
             int(1e6 // self.current_framerate),
@@ -318,7 +320,7 @@ class MainWindow(QMainWindow):
         self.video_recording = True
         self.stop_thread = False
 
-        # Check file size (10MB segmentation)
+        # Check file size in a separate thread (10MB limit per segment)
         self.size_thread = threading.Thread(target=self.check_video_size)
         self.size_thread.start()
 
@@ -355,14 +357,14 @@ class MainWindow(QMainWindow):
         GPIO.output(VDO_LED_PIN, GPIO.LOW)
         self.video_btn.setText("Start Video")
 
-        # Merge & upload
-        self.update_status("Merging & uploading video segments...")
+        # Merge, compress & upload
+        self.update_status("Merging, compressing & uploading video segments...")
         self.retry_failed_uploads()  # retry older
         for seg in self.segments:
             merged_file = seg["video"].replace(".mp4", "_merged.mp4")
             self.update_status(f"Merging => {os.path.basename(seg['video'])} + {os.path.basename(seg['audio'])}")
             if self.merge_audio_video(seg["video"], seg["audio"], merged_file):
-                self.update_status(f"Merged => {os.path.basename(merged_file)}, uploading...")
+                self.update_status(f"Merged & compressed => {os.path.basename(merged_file)}, uploading...")
                 if not self.upload_video(merged_file, seg["start_time"], seg["end_time"]):
                     failed_path = os.path.join(FAILED_DIR, os.path.basename(merged_file))
                     shutil.move(merged_file, failed_path)
@@ -525,17 +527,17 @@ class MainWindow(QMainWindow):
         ts = self.format_timestamp()
         return os.path.join(IMAGES_DIR, f"img_{DEVICE_ID}_{ts}.jpg")
 
-    # --------------- Merging & Uploading ---------------
+    # --------------- Merging, Compression & Uploading ---------------
     def merge_audio_video(self, video_file, audio_file, output_file):
-        # --- Modification 2: Compress video/audio using libx264 and aac ---
+        # Modified ffmpeg command to compress video and audio
         cmd = [
             "ffmpeg",
             "-y",
             "-i", video_file,
             "-i", audio_file,
             "-c:v", "libx264",
-            "-preset", "medium",
             "-crf", "28",
+            "-preset", "veryfast",
             "-c:a", "aac",
             "-b:a", "128k",
             output_file
@@ -544,7 +546,7 @@ class MainWindow(QMainWindow):
             subprocess.run(cmd, check=True)
             return True
         except subprocess.CalledProcessError as e:
-            self.update_status(f"ffmpeg merge error: {e}")
+            self.update_status(f"ffmpeg merge/compression error: {e}")
             return False
 
     def upload_video(self, file_path, start_time, end_time):
@@ -680,6 +682,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print("Error during cleanup:", e)
         event.accept()
+
 
 if __name__ == "__main__":
     try:
