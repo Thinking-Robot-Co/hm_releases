@@ -235,7 +235,7 @@ class MainWindow(QMainWindow):
 
         config = self.picam2.create_preview_configuration(
             main={"size": (self.current_width, self.current_height)},
-            transform=Transform(vflip=True),
+            
         )
         config["controls"]["FrameDurationLimits"] = (
             int(1e6 // self.current_framerate),
