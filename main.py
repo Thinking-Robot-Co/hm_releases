@@ -73,6 +73,7 @@ RESOLUTIONS = [
 
 def record_audio(audio_filename, stop_event):
     """Continuously record audio until stop_event is set."""
+    import pyaudio, wave
     p = pyaudio.PyAudio()
     stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100,
                     input=True, frames_per_buffer=1024)
@@ -232,10 +233,9 @@ class MainWindow(QMainWindow):
         if was_running:
             self.picam2.stop()
 
-        # Modified to remove mirroring by not flipping the image
         config = self.picam2.create_preview_configuration(
             main={"size": (self.current_width, self.current_height)},
-            transform=Transform()  # Removed vflip to unmirror the preview
+            transform=Transform(vflip=True),
         )
         config["controls"]["FrameDurationLimits"] = (
             int(1e6 // self.current_framerate),
@@ -320,7 +320,7 @@ class MainWindow(QMainWindow):
         self.video_recording = True
         self.stop_thread = False
 
-        # Check file size in a separate thread (10MB limit per segment)
+        # Check file size
         self.size_thread = threading.Thread(target=self.check_video_size)
         self.size_thread.start()
 
@@ -357,14 +357,14 @@ class MainWindow(QMainWindow):
         GPIO.output(VDO_LED_PIN, GPIO.LOW)
         self.video_btn.setText("Start Video")
 
-        # Merge, compress & upload
-        self.update_status("Merging, compressing & uploading video segments...")
+        # Merge & upload
+        self.update_status("Merging & uploading video segments...")
         self.retry_failed_uploads()  # retry older
         for seg in self.segments:
             merged_file = seg["video"].replace(".mp4", "_merged.mp4")
             self.update_status(f"Merging => {os.path.basename(seg['video'])} + {os.path.basename(seg['audio'])}")
             if self.merge_audio_video(seg["video"], seg["audio"], merged_file):
-                self.update_status(f"Merged & compressed => {os.path.basename(merged_file)}, uploading...")
+                self.update_status(f"Merged => {os.path.basename(merged_file)}, uploading...")
                 if not self.upload_video(merged_file, seg["start_time"], seg["end_time"]):
                     failed_path = os.path.join(FAILED_DIR, os.path.basename(merged_file))
                     shutil.move(merged_file, failed_path)
@@ -527,26 +527,22 @@ class MainWindow(QMainWindow):
         ts = self.format_timestamp()
         return os.path.join(IMAGES_DIR, f"img_{DEVICE_ID}_{ts}.jpg")
 
-    # --------------- Merging, Compression & Uploading ---------------
+    # --------------- Merging & Uploading ---------------
     def merge_audio_video(self, video_file, audio_file, output_file):
-        # Modified ffmpeg command to compress video and audio
         cmd = [
             "ffmpeg",
             "-y",
             "-i", video_file,
             "-i", audio_file,
-            "-c:v", "libx264",
-            "-crf", "28",
-            "-preset", "veryfast",
+            "-c:v", "copy",
             "-c:a", "aac",
-            "-b:a", "128k",
             output_file
         ]
         try:
             subprocess.run(cmd, check=True)
             return True
         except subprocess.CalledProcessError as e:
-            self.update_status(f"ffmpeg merge/compression error: {e}")
+            self.update_status(f"ffmpeg merge error: {e}")
             return False
 
     def upload_video(self, file_path, start_time, end_time):
