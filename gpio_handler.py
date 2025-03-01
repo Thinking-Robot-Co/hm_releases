@@ -4,71 +4,75 @@ import time
 import threading
 
 class GPIOHandler:
-    def __init__(self, video_callback=None, audio_callback=None, image_callback=None):
-        self.video_callback = video_callback
-        self.audio_callback = audio_callback
-        self.image_callback = image_callback
+    def __init__(self, main_window):
+        self.main_window = main_window
+        # Define GPIO pins.
+        self.btn_video = 17   # Video toggle pushbutton.
+        self.btn_image = 27   # Image capture pushbutton.
+        self.btn_audio = 22   # Audio toggle pushbutton.
+        self.led_video = 23   # Video indicator LED.
+        self.led_audio = 24   # Audio indicator LED.
+        self.led_system = 25  # System "alive" LED.
 
-        # Define pin numbers.
-        self.VIDEO_BTN_PIN = 17   # Toggles video recording
-        self.AUDIO_BTN_PIN = 22   # Toggles audio recording
-        self.IMAGE_BTN_PIN = 27   # Captures an image
-        self.VDO_LED_PIN = 23     # LED for video status
-        self.IND_LED_PIN = 25     # Indicator LED
-
-        # Set up GPIO.
+        # Setup GPIO.
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.VIDEO_BTN_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(self.AUDIO_BTN_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(self.IMAGE_BTN_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(self.VDO_LED_PIN, GPIO.OUT)
-        GPIO.setup(self.IND_LED_PIN, GPIO.OUT)
-        GPIO.output(self.IND_LED_PIN, GPIO.HIGH)
+        # Setup buttons as inputs with pull-up resistors.
+        GPIO.setup(self.btn_video, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.setup(self.btn_image, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.setup(self.btn_audio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        # Setup LEDs as outputs.
+        GPIO.setup(self.led_video, GPIO.OUT)
+        GPIO.setup(self.led_audio, GPIO.OUT)
+        GPIO.setup(self.led_system, GPIO.OUT)
 
-        self._stop_event = threading.Event()
-        self._thread = threading.Thread(target=self._poll_buttons)
+        # Turn the system LED on.
+        GPIO.output(self.led_system, GPIO.HIGH)
 
-        # Flags to debounce button presses.
-        self._video_pressed = False
-        self._audio_pressed = False
-        self._image_pressed = False
+        self.running = True
+        self.poll_thread = threading.Thread(target=self.poll_gpio, daemon=True)
+        self.poll_thread.start()
 
-    def start(self):
-        self._stop_event.clear()
-        self._thread.start()
+    def poll_gpio(self):
+        # Simple debouncing: remember last state.
+        video_pressed = False
+        image_pressed = False
+        audio_pressed = False
 
-    def stop(self):
-        self._stop_event.set()
-        self._thread.join()
-        GPIO.cleanup()
-
-    def _poll_buttons(self):
-        while not self._stop_event.is_set():
-            # Check video button.
-            if GPIO.input(self.VIDEO_BTN_PIN) == GPIO.LOW:
-                if not self._video_pressed:
-                    self._video_pressed = True
-                    if self.video_callback is not None:
-                        self.video_callback()
+        while self.running:
+            # Check pushbuttons (active low).
+            if GPIO.input(self.btn_video) == GPIO.LOW:
+                if not video_pressed:
+                    video_pressed = True
+                    # Trigger video toggle in MainWindow.
+                    self.main_window.toggle_video_recording()
             else:
-                self._video_pressed = False
+                video_pressed = False
 
-            # Check audio button.
-            if GPIO.input(self.AUDIO_BTN_PIN) == GPIO.LOW:
-                if not self._audio_pressed:
-                    self._audio_pressed = True
-                    if self.audio_callback is not None:
-                        self.audio_callback()
+            if GPIO.input(self.btn_image) == GPIO.LOW:
+                if not image_pressed:
+                    image_pressed = True
+                    # Trigger image capture.
+                    self.main_window.handle_capture_image()
             else:
-                self._audio_pressed = False
+                image_pressed = False
 
-            # Check image capture button.
-            if GPIO.input(self.IMAGE_BTN_PIN) == GPIO.LOW:
-                if not self._image_pressed:
-                    self._image_pressed = True
-                    if self.image_callback is not None:
-                        self.image_callback()
+            if GPIO.input(self.btn_audio) == GPIO.LOW:
+                if not audio_pressed:
+                    audio_pressed = True
+                    # Trigger audio toggle.
+                    self.main_window.toggle_audio_recording()
             else:
-                self._image_pressed = False
+                audio_pressed = False
+
+            # Update LED states based on the MainWindow flags.
+            GPIO.output(self.led_video, GPIO.HIGH if self.main_window.video_recording else GPIO.LOW)
+            GPIO.output(self.led_audio, GPIO.HIGH if self.main_window.audio_recording else GPIO.LOW)
 
             time.sleep(0.1)
+
+    def cleanup(self):
+        self.running = False
+        self.poll_thread.join()
+        # Turn off the system LED.
+        GPIO.output(self.led_system, GPIO.LOW)
+        GPIO.cleanup()

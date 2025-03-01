@@ -1,162 +1,178 @@
 #!/usr/bin/env python3
 import sys
-from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QHBoxLayout, QVBoxLayout, QWidget, QPushButton
-from camera import CameraController
+import threading
+import os
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget,
+    QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QCheckBox
+)
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
+from camera import Camera
 from recorder import AudioRecorder, VideoRecorder
-from merger import merge_audio_video
-import uploader
-import gpio_handler  # Import our GPIO module
+from uploader import upload_image, upload_audio, upload_video
+from gpio_handler import GPIOHandler
 
 class MainWindow(QMainWindow):
+    imageCaptured = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Construction Site Helmet Recorder")
-        self.camera_controller = CameraController()
+        self.setWindowTitle("Construction Site Helmet - Preview")
+        self.showFullScreen()
+
+        self.imageCaptured.connect(self.finish_capture)
+
+        # Initialize camera.
+        self.camera = Camera()
+        self.preview_widget = self.camera.start_preview()
+
+        # Initialize recorders.
         self.audio_recorder = AudioRecorder()
-        self.video_recorder = VideoRecorder(self.camera_controller)
+        self.video_recorder = VideoRecorder(self.camera)
         self.audio_recording = False
         self.video_recording = False
-        self.init_ui()
 
-        # Setup GPIO handler with callbacks.
-        self.gpio_handler = gpio_handler.GPIOHandler(
-            video_callback=self.handle_gpio_video,
-            audio_callback=self.handle_gpio_audio,
-            image_callback=self.handle_gpio_image
-        )
-        self.gpio_handler.start()
-
-    def init_ui(self):
-        # Main widget and layout.
+        # Set up the GUI layout.
         central_widget = QWidget()
-        main_layout = QHBoxLayout()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        main_layout.addWidget(self.preview_widget, stretch=1)
 
-        # Left: Camera preview widget.
-        self.camera_preview = self.camera_controller.start_preview()
-        if self.camera_preview:
-            main_layout.addWidget(self.camera_preview, 3)
-        else:
-            error_label = QLabel("Camera preview not available.")
-            main_layout.addWidget(error_label, 3)
+        # Bottom controls.
+        bottom_layout = QHBoxLayout()
+        bottom_layout.setSpacing(10)
 
-        # Right: Controls and status messages.
-        right_layout = QVBoxLayout()
-        self.status_label = QLabel("Status: Ready")
-        right_layout.addWidget(self.status_label)
+        # Video toggle button.
+        self.video_btn = QPushButton("Start Video")
+        self.video_btn.setFixedSize(150, 40)
+        self.video_btn.clicked.connect(self.toggle_video_recording)
+        bottom_layout.addWidget(self.video_btn)
+
+        # Checkbox for recording audio with video.
+        self.record_audio_checkbox = QCheckBox("Record Audio with Video")
+        self.record_audio_checkbox.setChecked(True)
+        bottom_layout.addWidget(self.record_audio_checkbox)
 
         # Capture Image button.
-        capture_button = QPushButton("Capture Image")
-        capture_button.clicked.connect(self.handle_capture_image)
-        right_layout.addWidget(capture_button)
+        self.capture_btn = QPushButton("Capture Image")
+        self.capture_btn.setFixedSize(150, 40)
+        self.capture_btn.clicked.connect(self.handle_capture_image)
+        bottom_layout.addWidget(self.capture_btn)
 
-        # Toggle Audio Recording button.
-        self.audio_button = QPushButton("Start Audio Recording")
-        self.audio_button.clicked.connect(self.handle_audio_recording)
-        right_layout.addWidget(self.audio_button)
+        # Audio toggle button.
+        self.audio_btn = QPushButton("Start Audio")
+        self.audio_btn.setFixedSize(150, 40)
+        self.audio_btn.clicked.connect(self.toggle_audio_recording)
+        bottom_layout.addWidget(self.audio_btn)
 
-        # Toggle Video Recording button.
-        self.video_button = QPushButton("Start Video Recording")
-        self.video_button.clicked.connect(self.handle_video_recording)
-        right_layout.addWidget(self.video_button)
+        bottom_layout.addStretch()
 
-        # Merge Last A/V button.
-        merge_button = QPushButton("Merge Last A/V")
-        merge_button.clicked.connect(self.handle_merge_av)
-        right_layout.addWidget(merge_button)
-        
-        # Retry Failed Uploads button.
-        retry_button = QPushButton("Retry Failed Uploads")
-        retry_button.clicked.connect(self.handle_retry_uploads)
-        right_layout.addWidget(retry_button)
+        # Close Session button.
+        self.close_btn = QPushButton("Close Session")
+        self.close_btn.setFixedSize(150, 40)
+        self.close_btn.clicked.connect(self.close_session)
+        bottom_layout.addWidget(self.close_btn)
 
-        main_layout.addLayout(right_layout, 1)
-        central_widget.setLayout(main_layout)
-        self.setCentralWidget(central_widget)
-        print("Main window UI initialized with camera preview, controls, and GPIO integration.")
+        main_layout.addLayout(bottom_layout)
 
-    # GPIO callback wrappers.
-    def handle_gpio_video(self):
-        print("GPIO: Video button pressed")
-        self.handle_video_recording()
+        self.status_label = QLabel("Ready")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setStyleSheet("background-color: #EFEFEF; padding: 5px;")
+        main_layout.addWidget(self.status_label)
 
-    def handle_gpio_audio(self):
-        print("GPIO: Audio button pressed")
-        self.handle_audio_recording()
-
-    def handle_gpio_image(self):
-        print("GPIO: Image button pressed")
-        self.handle_capture_image()
+        # Initialize GPIO handler.
+        self.gpio_handler = GPIOHandler(self)
 
     def handle_capture_image(self):
-        self.status_label.setText("Status: Capturing image...")
-        filename = self.camera_controller.capture_image()
-        if filename:
-            self.status_label.setText(f"Status: Image saved as {filename}")
-        else:
-            self.status_label.setText("Status: Image capture failed.")
+        self.capture_btn.setEnabled(False)
+        threading.Thread(target=self.capture_image_worker, daemon=True).start()
 
-    def handle_audio_recording(self):
+    def capture_image_worker(self):
+        msg = ""
+        try:
+            image_path = self.camera.capture_image()
+            success, resp = upload_image(image_path)
+            if success:
+                os.remove(image_path)
+                msg = f"Image captured & uploaded: {image_path}"
+            else:
+                msg = f"Image captured but upload failed: {resp}"
+        except Exception as e:
+            msg = f"Image capture error: {e}"
+        finally:
+            self.imageCaptured.emit(msg)
+
+    @pyqtSlot(str)
+    def finish_capture(self, msg):
+        self.status_label.setText(msg)
+        self.capture_btn.setEnabled(True)
+
+    def toggle_audio_recording(self):
         if not self.audio_recording:
             self.audio_recorder.start_recording()
             self.audio_recording = True
-            self.audio_button.setText("Stop Audio Recording")
-            self.status_label.setText("Status: Audio recording started.")
+            self.audio_btn.setText("Stop Audio")
+            self.status_label.setText("Audio recording started...")
         else:
-            filename = self.audio_recorder.stop_recording()
+            audio_file = self.audio_recorder.stop_recording()
             self.audio_recording = False
-            self.audio_button.setText("Start Audio Recording")
-            if filename:
-                self.status_label.setText(f"Status: Audio saved as {filename}")
+            self.audio_btn.setText("Start Audio")
+            success, resp = upload_audio(audio_file, "", "")
+            if success:
+                os.remove(audio_file)
+                self.status_label.setText(f"Audio recorded & uploaded: {audio_file}")
             else:
-                self.status_label.setText("Status: Audio recording failed.")
+                self.status_label.setText(f"Audio recorded but upload failed: {resp}")
 
-    def handle_video_recording(self):
+    def toggle_video_recording(self):
+        record_audio_with_video = self.record_audio_checkbox.isChecked()
         if not self.video_recording:
-            self.video_recorder.start_recording()
+            if record_audio_with_video:
+                self.audio_recorder.start_recording()
+                self.audio_recording = True
+            self.video_recorder.start_recording(with_audio=record_audio_with_video)
             self.video_recording = True
-            self.video_button.setText("Stop Video Recording")
-            self.status_label.setText("Status: Video recording started.")
+            self.video_btn.setText("Stop Video")
+            self.status_label.setText("Video recording started...")
         else:
             segments = self.video_recorder.stop_recording()
             self.video_recording = False
-            self.video_button.setText("Start Video Recording")
-            self.status_label.setText(f"Status: Video recording stopped. {len(segments)} segment(s) created.")
-
-    def handle_merge_av(self):
-        video_segments = self.video_recorder.segments
-        audio_file = self.audio_recorder.audio_file
-        if video_segments and audio_file:
-            video_file = video_segments[0]["video"]
-            output_file = video_file.replace(".mp4", "_merged.mp4")
-            success = merge_audio_video(video_file, audio_file, output_file)
-            if success:
-                self.status_label.setText(f"Status: Merged file created: {output_file}")
+            self.video_btn.setText("Start Video")
+            if record_audio_with_video and self.audio_recording:
+                audio_file = self.audio_recorder.stop_recording()
+                self.audio_recording = False
+                video_file = segments[0] if segments else None
+                if video_file and audio_file:
+                    merged_file = self.video_recorder.merge_video_audio(video_file, audio_file)
+                    if merged_file:
+                        success, resp = upload_video(merged_file, "", "")
+                        if success:
+                            os.remove(merged_file)
+                            self.status_label.setText(f"Video merged & uploaded: {merged_file}")
+                        else:
+                            self.status_label.setText(f"Merged video upload failed: {resp}")
+                    else:
+                        self.status_label.setText("Merging failed.")
+                else:
+                    self.status_label.setText("Missing video or audio for merging.")
             else:
-                self.status_label.setText("Status: Merging failed.")
-        else:
-            self.status_label.setText("Status: Insufficient recordings for merging.")
+                seg_info = ", ".join(segments)
+                self.status_label.setText(f"Video recorded. Segments: {seg_info}")
 
-    def handle_retry_uploads(self):
-        uploader.retry_failed_uploads()
-        self.status_label.setText("Status: Retried failed uploads.")
-
-    def closeEvent(self, event):
-        self.camera_controller.stop_preview()
+    def close_session(self):
+        self.camera.stop_preview()
         if self.audio_recording:
             self.audio_recorder.stop_recording()
         if self.video_recording:
             self.video_recorder.stop_recording()
-        if hasattr(self, 'gpio_handler'):
-            self.gpio_handler.stop()
-        event.accept()
+        # Clean up GPIO.
+        self.gpio_handler.cleanup()
+        QApplication.quit()
 
-def main():
-    print("Starting application...")
+if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    print("Application window is now visible.")
     sys.exit(app.exec_())
-
-if __name__ == '__main__':
-    main()
