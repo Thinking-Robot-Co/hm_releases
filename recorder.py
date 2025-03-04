@@ -21,6 +21,11 @@ class AudioRecorder:
         self.temp_audio_file = os.path.join("Audios", "temp_audio.wav")
         self.recording_start_time = None
         self.audio_counter = 1
+        # For segmented recording:
+        self.segment_audio_thread = None
+        self.segment_stop_event = None
+        self.segment_temp_file = None
+        self.segment_start_time = None
 
     def start_recording(self):
         if self.audio_thread is not None and self.audio_thread.is_alive():
@@ -69,12 +74,60 @@ class AudioRecorder:
         self.audio_counter += 1
         return final_filename
 
+    # Methods for segmented audio recording:
+    def start_segmented_recording(self):
+        self.segment_stop_event = threading.Event()
+        self.segment_start_time = datetime.datetime.now()
+        self.segment_temp_file = os.path.join("Audios", "temp_seg_audio.wav")
+        self.segment_audio_thread = threading.Thread(target=self.record_segment_audio, daemon=True)
+        self.segment_audio_thread.start()
+
+    def record_segment_audio(self):
+        p = pyaudio.PyAudio()
+        stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE,
+                        input=True, frames_per_buffer=CHUNK)
+        frames = []
+        while not self.segment_stop_event.is_set():
+            try:
+                data = stream.read(CHUNK, exception_on_overflow=False)
+            except Exception as e:
+                print("Segmented audio error:", e)
+                continue
+            frames.append(data)
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+        wf = wave.open(self.segment_temp_file, 'wb')
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(p.get_sample_size(FORMAT))
+        wf.setframerate(RATE)
+        wf.writeframes(b''.join(frames))
+        wf.close()
+
+    def stop_segmented_recording(self):
+        if self.segment_stop_event:
+            self.segment_stop_event.set()
+        if self.segment_audio_thread:
+            self.segment_audio_thread.join()
+        start = self.segment_start_time.strftime("%d%b%Y_%H%M%S").lower()
+        end_time = datetime.datetime.now()
+        end = end_time.strftime("%d%b%Y_%H%M%S").lower()
+        final_filename = os.path.join("Audios", f"audio_seg_{start}_to_{end}.wav")
+        try:
+            os.rename(self.segment_temp_file, final_filename)
+        except Exception as e:
+            print("Error renaming segmented audio file:", e)
+            final_filename = self.segment_temp_file
+        return final_filename
+
 class VideoRecorder:
-    def __init__(self, camera):
+    def __init__(self, camera, audio_recorder=None):
         """
         camera: an instance of Camera from camera.py.
+        audio_recorder: an instance of AudioRecorder for merged recording.
         """
         self.camera = camera
+        self.audio_recorder = audio_recorder
         self.recording = False
         self.segment_threshold = 10 * 1024 * 1024  # 10 MB
         self.current_video_file = None
@@ -82,9 +135,10 @@ class VideoRecorder:
         self.monitor_thread = None
         self.stop_monitor = False
         self.with_audio = False
-        self.session_counter = 1  # increments for each new video session
-        self.chunk_num = 1        # for now, always 1
+        self.session_counter = 1  # Increases per session.
+        self.chunk_num = 1        # For now, always 1 (to be increased later).
         self.video_start_time = None
+        self.segmentation_thread = None
 
     def generate_video_filename(self):
         now = datetime.datetime.now()
@@ -99,15 +153,19 @@ class VideoRecorder:
         self.with_audio = with_audio
         self.segments = []
         os.makedirs("Videos", exist_ok=True)
-        self.video_start_time = datetime.datetime.now()
-        self.current_video_file = self.generate_video_filename()
-        self.camera.picam2.start_and_record_video(self.current_video_file)
-        self.segments.append(self.current_video_file)
-        if not self.with_audio:
+        if self.with_audio and self.audio_recorder is not None:
+            # Start the segmentation loop for merged video+audio.
+            self.segmentation_thread = threading.Thread(target=self._record_with_segmentation, daemon=True)
+            self.segmentation_thread.start()
+        else:
+            # Non-audio mode: use the standard segmentation monitoring.
+            self.video_start_time = datetime.datetime.now()
+            self.current_video_file = self.generate_video_filename()
+            self.camera.picam2.start_and_record_video(self.current_video_file)
+            self.segments.append(self.current_video_file)
             self.stop_monitor = False
             self.monitor_thread = threading.Thread(target=self.monitor_video_size, daemon=True)
             self.monitor_thread.start()
-        # If with_audio is True, segmentation is disabled.
 
     def monitor_video_size(self):
         while self.recording and not self.stop_monitor:
@@ -123,18 +181,47 @@ class VideoRecorder:
                     self.segments.append(self.current_video_file)
             time.sleep(1)
 
+    def _record_with_segmentation(self):
+        # Segmented recording loop for merged video+audio.
+        while self.recording:
+            self.video_start_time = datetime.datetime.now()
+            video_file = self.generate_video_filename()
+            # Start video segment.
+            self.camera.picam2.start_and_record_video(video_file)
+            # Start corresponding audio segment.
+            self.audio_recorder.start_segmented_recording()
+            # Monitor video file size.
+            while self.recording:
+                if os.path.exists(video_file) and os.path.getsize(video_file) >= self.segment_threshold:
+                    break
+                time.sleep(1)
+            try:
+                self.camera.picam2.stop_recording()
+            except Exception as e:
+                print("Error stopping video recording:", e)
+            audio_file = self.audio_recorder.stop_segmented_recording()
+            merged_file = self.merge_video_audio(video_file, audio_file)
+            if merged_file:
+                self.segments.append(merged_file)
+            else:
+                self.segments.append(video_file)
+        # End segmentation loop.
+
     def stop_recording(self):
         if not self.recording:
             return self.segments
-        self.stop_monitor = True
         self.recording = False
-        try:
-            self.camera.picam2.stop_recording()
-        except Exception as e:
-            print("Error stopping video recording:", e)
-        if self.monitor_thread:
-            self.monitor_thread.join()
-        # **Resume the preview so that image capture remains available.**
+        if self.with_audio and self.segmentation_thread is not None:
+            self.segmentation_thread.join()
+        else:
+            self.stop_monitor = True
+            try:
+                self.camera.picam2.stop_recording()
+            except Exception as e:
+                print("Error stopping video recording:", e)
+            if self.monitor_thread:
+                self.monitor_thread.join()
+        # Resume preview so image capture remains available.
         self.camera.picam2.start()
         video_end_time = datetime.datetime.now()
         start_str = self.video_start_time.strftime("%d%b%Y_%H%M%S").lower()

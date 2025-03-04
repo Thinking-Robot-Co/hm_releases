@@ -28,16 +28,18 @@ class MainWindow(QMainWindow):
 
         # Initialize recorders.
         self.audio_recorder = AudioRecorder()
-        self.video_recorder = VideoRecorder(self.camera)
+        # Pass audio_recorder into VideoRecorder for segmented merged recording.
+        self.video_recorder = VideoRecorder(self.camera, self.audio_recorder)
         self.audio_recording = False
         self.video_recording = False
 
-        # Set up the GUI layout.
+        # Set up layout.
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
+
         main_layout.addWidget(self.preview_widget, stretch=1)
 
         # Bottom controls.
@@ -129,9 +131,6 @@ class MainWindow(QMainWindow):
     def toggle_video_recording(self):
         record_audio_with_video = self.record_audio_checkbox.isChecked()
         if not self.video_recording:
-            if record_audio_with_video:
-                self.audio_recorder.start_recording()
-                self.audio_recording = True
             self.video_recorder.start_recording(with_audio=record_audio_with_video)
             self.video_recording = True
             self.video_btn.setText("Stop Video")
@@ -140,23 +139,16 @@ class MainWindow(QMainWindow):
             segments = self.video_recorder.stop_recording()
             self.video_recording = False
             self.video_btn.setText("Start Video")
-            if record_audio_with_video and self.audio_recording:
-                audio_file = self.audio_recorder.stop_recording()
-                self.audio_recording = False
-                video_file = segments[0] if segments else None
-                if video_file and audio_file:
-                    merged_file = self.video_recorder.merge_video_audio(video_file, audio_file)
-                    if merged_file:
-                        success, resp = upload_video(merged_file, "", "")
+            if record_audio_with_video:
+                if segments:
+                    msg = "Video segments merged & recorded: " + ", ".join(segments)
+                    for mf in segments:
+                        success, resp = upload_video(mf, "", "")
                         if success:
-                            os.remove(merged_file)
-                            self.status_label.setText(f"Video merged & uploaded: {merged_file}")
-                        else:
-                            self.status_label.setText(f"Merged video upload failed: {resp}")
-                    else:
-                        self.status_label.setText("Merging failed.")
+                            os.remove(mf)
+                    self.status_label.setText(msg)
                 else:
-                    self.status_label.setText("Missing video or audio for merging.")
+                    self.status_label.setText("No video segments recorded.")
             else:
                 seg_info = ", ".join(segments)
                 self.status_label.setText(f"Video recorded. Segments: {seg_info}")
@@ -167,7 +159,6 @@ class MainWindow(QMainWindow):
             self.audio_recorder.stop_recording()
         if self.video_recording:
             self.video_recorder.stop_recording()
-        # Clean up GPIO.
         self.gpio_handler.cleanup()
         QApplication.quit()
 
