@@ -9,9 +9,27 @@ class Camera:
         self.picam2 = Picamera2()
         self.preview_widget = None
         self.preview_started = False
-        # Counter for images.
         self.image_counter = 1
         os.makedirs("Images", exist_ok=True)
+
+    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None):
+        """
+        Apply transformation settings for video (and preview).
+        Optionally adjust output dimensions.
+        """
+        # Create a fresh preview configuration.
+        config = self.picam2.create_preview_configuration()
+        
+        # Add transform settings.
+        config["transform"] = {"hflip": hflip, "vflip": vflip, "rotation": rotation}
+        
+        # Optionally set new dimensions (if provided).
+        if width is not None and height is not None:
+            # Here, 'size' should be a tuple (width, height)
+            config["size"] = (width, height)
+        
+        # Reconfigure the camera with the new settings.
+        self.picam2.configure(config)
 
     def start_preview(self):
         if self.preview_started:
@@ -19,11 +37,15 @@ class Camera:
 
         self.preview_widget = QGlPicamera2(self.picam2, keep_ar=True)
         config = self.picam2.create_preview_configuration()
+        # (Optional: if you want the preview to always use a specific transform,
+        # you can call apply_video_transform here with your default settings.)
+        # For example:
+        # self.apply_video_transform(hflip=True, vflip=False, rotation=90, width=1280, height=720)
         self.picam2.configure(config)
         self.picam2.start()
         self.preview_started = True
         return self.preview_widget
-
+		
     def stop_preview(self):
         if self.preview_started:
             self.picam2.stop()
