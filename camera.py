@@ -19,15 +19,17 @@ class Camera:
         Parameters:
         hflip (bool): Horizontal flip.
         vflip (bool): Vertical flip.
-        rotation (int): Rotation angle.
+        rotation (int): Rotation angle in degrees (must be 0, 90, 180, or 270).
         width (int): Desired output width.
         height (int): Desired output height.
-        fps (int): Desired frames per second (if supported).
-        digital_zoom (tuple): Normalized zoom region (x, y, w, h). (0,0,1,1) is full sensor.
+        fps (int): Desired frames per second (if supported by the sensor).
+        digital_zoom (tuple): Normalized zoom region (x, y, width, height). (0, 0, 1, 1) is full sensor view.
         """
-        # Create a new preview configuration.
+        # Create a fresh preview configuration.
         config = self.picam2.create_preview_configuration()
-        config["transform"] = {"hflip": hflip, "vflip": vflip, "rotation": rotation}
+        
+        # IMPORTANT: Use 'rotate' instead of 'rotation'
+        config["transform"] = {"hflip": hflip, "vflip": vflip, "rotate": rotation}
         
         # Set resolution if provided.
         if width is not None and height is not None:
@@ -36,10 +38,10 @@ class Camera:
         # Apply the new configuration.
         self.picam2.configure(config)
         
-        # Set digital zoom to use the full sensor (no zoom in) or your desired value.
+        # Set digital zoom (full sensor view when using (0,0,1,1)).
         self.picam2.set_controls({"DigitalZoom": digital_zoom})
         
-        # Optionally, set the frame rate if the camera supports it.
+        # Optionally, set the frame rate if provided.
         if fps is not None:
             self.picam2.set_controls({"FrameRate": fps})
 
