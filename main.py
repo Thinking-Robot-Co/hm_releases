@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+### THIS IS THINKING ROBOT HELLO ###
 import sys
 import threading
 import os
