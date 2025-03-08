@@ -12,7 +12,7 @@ class Camera:
         self.image_counter = 1
         os.makedirs("Images", exist_ok=True)
 
-    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None, fps=None, zoom=None):
+    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None, fps=None, zoom=None):                                        
         """
         Apply transformation settings for video (and preview).
         Optionally adjust output dimensions.
@@ -20,14 +20,14 @@ class Camera:
         # Create a fresh preview configuration.
         config = self.picam2.create_preview_configuration()
         
-        # Set transform settings with explicit types.
+        # Set transform settings. (Use booleans as-is.)
         config["transform"] = {
-            "hflip": 1 if hflip else 0,  # Convert Boolean to integer (0 or 1)
-            "vflip": 1 if vflip else 0,
+            "hflip": bool(hflip),
+            "vflip": bool(vflip),
             "rotation": int(rotation)
         }
         
-        # Optionally set new dimensions (if provided).
+        # Set resolution if provided.
         if width is not None and height is not None:
             config["size"] = (int(width), int(height))
         
@@ -35,12 +35,23 @@ class Camera:
         if fps is not None:
             config["controls"] = {"FrameRate": float(fps)}
         
-        # Set crop (for zoom) if provided, ensuring values are floats.
+        # Set crop (for zoom) if provided.
         if zoom is not None:
-            config["crop"] = tuple(float(v) for v in zoom)
-        
+            # Instead of a tuple, use a dict with explicit keys.
+            # For full sensor view, use: {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0}
+            if isinstance(zoom, tuple) and len(zoom) == 4:
+                config["crop"] = {
+                    "x": float(zoom[0]),
+                    "y": float(zoom[1]),
+                    "width": float(zoom[2]),
+                    "height": float(zoom[3])
+                }
+            else:
+                config["crop"] = zoom
+
         # Apply the configuration.
         self.picam2.configure(config)
+
 
 
     def start_preview(self):
@@ -60,6 +71,7 @@ class Camera:
         self.picam2.start()
         self.preview_started = True
         return self.preview_widget
+
 
 
 		
