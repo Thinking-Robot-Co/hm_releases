@@ -20,35 +20,28 @@ class Camera:
         # Create a fresh preview configuration.
         config = self.picam2.create_preview_configuration()
         
-        # Set transform settings.
+        # Set transform settings with explicit types.
         config["transform"] = {
-            "hflip": int(hflip),    # Use 0 or 1 instead of Boolean.
-            "vflip": int(vflip),
-            "rotation": rotation
+            "hflip": 1 if hflip else 0,  # Convert Boolean to integer (0 or 1)
+            "vflip": 1 if vflip else 0,
+            "rotation": int(rotation)
         }
         
-        # Set resolution if provided.
+        # Optionally set new dimensions (if provided).
         if width is not None and height is not None:
-            config["size"] = (width, height)
+            config["size"] = (int(width), int(height))
         
         # Set FPS if provided.
         if fps is not None:
-            config["controls"] = {"FrameRate": fps}
+            config["controls"] = {"FrameRate": float(fps)}
         
-        # Set crop (for zoom) if provided. Use floats.
+        # Set crop (for zoom) if provided, ensuring values are floats.
         if zoom is not None:
-            # Ensure the crop values are floats (e.g., (0.0, 0.0, 1.0, 1.0) for full sensor view).
-            crop = tuple(float(x) for x in zoom)
-            config["crop"] = crop
-
+            config["crop"] = tuple(float(v) for v in zoom)
+        
         # Apply the configuration.
         self.picam2.configure(config)
 
-
-
-        
-        # Reconfigure the camera with the new settings.
-        self.picam2.configure(config)
 
     def start_preview(self):
         if self.preview_started:
@@ -67,6 +60,7 @@ class Camera:
         self.picam2.start()
         self.preview_started = True
         return self.preview_widget
+
 
 		
     def stop_preview(self):
