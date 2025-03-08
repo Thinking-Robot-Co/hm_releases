@@ -165,8 +165,8 @@ class VideoRecorder:
                 hflip=True,
                 vflip=False,
                 rotation=90,
-                width=1920,    # Adjust resolution as desired.
-                height=1080,
+                width=3840,       # 4K resolution width
+                height=2160,      
                 fps=30,        # Set desired frames per second.
                 zoom=(0, 0, 1, 1)  # (0,0,1,1) uses the full sensor (no digital zoom).
             )
