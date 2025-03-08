@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-### THIS IS THINKING ROBOT HELLO | WELCOME ###
 import sys
 import threading
 import os
@@ -12,6 +11,8 @@ from camera import Camera
 from recorder import AudioRecorder, VideoRecorder
 from uploader import upload_image, upload_audio, upload_video
 from gpio_handler import GPIOHandler
+# Import the failed-to-upload directory constants from utils.py
+from utils import FAILED_IMAGES_DIR, FAILED_VIDEOS_DIR, FAILED_AUDIOS_DIR
 
 class MainWindow(QMainWindow):
     imageCaptured = pyqtSignal(str)
@@ -88,36 +89,38 @@ class MainWindow(QMainWindow):
         # Initialize GPIO handler.
         self.gpio_handler = GPIOHandler(self)
 
+        # Attempt to re-upload any previously failed files on startup.
+        self.attempt_reupload_failed_files()
+
     def attempt_reupload_failed_files(self):
-        # Define directories to scan
+        # Define directories to scan for failed uploads.
         failed_dirs = {
             "image": FAILED_IMAGES_DIR,
             "audio": FAILED_AUDIOS_DIR,
             "video": FAILED_VIDEOS_DIR,
         }
 
-        # Iterate over file types and directories
+        # Iterate over file types and directories.
         for file_type, failed_dir in failed_dirs.items():
             if not os.path.exists(failed_dir):
                 continue
-            
+
             for file_name in os.listdir(failed_dir):
                 file_path = os.path.join(failed_dir, file_name)
                 print(f"Attempting re-upload of {file_path}")
-                
+
                 if file_type == "image":
                     success, resp = upload_image(file_path)
                 elif file_type == "audio":
                     success, resp = upload_audio(file_path)
                 elif file_type == "video":
                     success, resp = upload_video(file_path)
-                
+
                 if success:
                     os.remove(file_path)
                     print(f"Successfully re-uploaded and deleted {file_path}")
                 else:
                     print(f"Failed again to upload {file_path}: {resp}")
-
 
     def handle_capture_image(self):
         self.capture_btn.setEnabled(False)
@@ -162,6 +165,7 @@ class MainWindow(QMainWindow):
 
     def toggle_video_recording(self):
         record_audio_with_video = self.record_audio_checkbox.isChecked()
+        # Re-attempt to upload any failed files before starting a new session.
         self.attempt_reupload_failed_files()
 
         if not self.video_recording:
