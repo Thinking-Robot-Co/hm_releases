@@ -12,7 +12,7 @@ class Camera:
         self.image_counter = 1
         os.makedirs("Images", exist_ok=True)
 
-    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None, fps=None, zoom=None):                                        
+    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None):
         """
         Apply transformation settings for video (and preview).
         Optionally adjust output dimensions.
@@ -20,60 +20,31 @@ class Camera:
         # Create a fresh preview configuration.
         config = self.picam2.create_preview_configuration()
         
-        # Set transform settings. (Use booleans as-is.)
-        config["transform"] = {
-            "hflip": bool(hflip),
-            "vflip": bool(vflip),
-            "rotation": int(rotation)
-        }
+        # Add transform settings.
+        config["transform"] = {"hflip": hflip, "vflip": vflip, "rotation": rotation}
         
-        # Set resolution if provided.
+        # Optionally set new dimensions (if provided).
         if width is not None and height is not None:
-            config["size"] = (int(width), int(height))
+            # Here, 'size' should be a tuple (width, height)
+            config["size"] = (width, height)
         
-        # Set FPS if provided.
-        if fps is not None:
-            config["controls"] = {"FrameRate": float(fps)}
-        
-        # Set crop (for zoom) if provided.
-        if zoom is not None:
-            # Instead of a tuple, use a dict with explicit keys.
-            # For full sensor view, use: {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0}
-            if isinstance(zoom, tuple) and len(zoom) == 4:
-                config["crop"] = {
-                    "x": float(zoom[0]),
-                    "y": float(zoom[1]),
-                    "width": float(zoom[2]),
-                    "height": float(zoom[3])
-                }
-            else:
-                config["crop"] = zoom
-
-        # Apply the configuration.
+        # Reconfigure the camera with the new settings.
         self.picam2.configure(config)
-
-
 
     def start_preview(self):
         if self.preview_started:
             return self.preview_widget
 
         self.preview_widget = QGlPicamera2(self.picam2, keep_ar=True)
-        self.apply_video_transform(
-            hflip=True,
-            vflip=False,
-            rotation=90,
-            width=3840,       # 4K resolution width
-            height=2160,      # 4K resolution height
-            fps=30,           # Frames per second
-            zoom=(0.0, 0.0, 1.0, 1.0)  # Full sensor view (no digital zoom)
-        )
+        config = self.picam2.create_preview_configuration()
+        # (Optional: if you want the preview to always use a specific transform,
+        # you can call apply_video_transform here with your default settings.)
+        # For example:
+        # self.apply_video_transform(hflip=True, vflip=False, rotation=90, width=1280, height=720)
+        self.picam2.configure(config)
         self.picam2.start()
         self.preview_started = True
         return self.preview_widget
-
-
-
 		
     def stop_preview(self):
         if self.preview_started:
