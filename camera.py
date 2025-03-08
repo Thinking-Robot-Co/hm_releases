@@ -16,19 +16,23 @@ class Camera:
         # Create a fresh preview configuration.
         config = self.picam2.create_preview_configuration()
         
-        # Use 'rotate' as the key (Picamera2 expects "rotate").
-        config["transform"] = {"hflip": hflip, "vflip": vflip, "rotate": rotation}
+        # Set transform as a tuple: (hflip, vflip, rotation)
+        config["transform"] = (hflip, vflip, rotation)
         
+        # Set resolution if provided.
         if width is not None and height is not None:
             config["size"] = (width, height)
         
         # Apply the configuration.
         self.picam2.configure(config)
         
-        # Set additional controls.
+        # Set digital zoom (full sensor view when using (0,0,1,1)).
         self.picam2.set_controls({"DigitalZoom": digital_zoom})
+        
+        # Optionally, set the frame rate if provided.
         if fps is not None:
             self.picam2.set_controls({"FrameRate": fps})
+
 
 
 
