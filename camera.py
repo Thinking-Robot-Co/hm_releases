@@ -40,7 +40,7 @@ class Camera:
         # (Optional: if you want the preview to always use a specific transform,
         # you can call apply_video_transform here with your default settings.)
         # For example:
-        # self.apply_video_transform(hflip=True, vflip=False, rotation=90, width=1280, height=720)
+        self.apply_video_transform(hflip=True, vflip=False, rotation=90, width=1920, height=1080)
         self.picam2.configure(config)
         self.picam2.start()
         self.preview_started = True
