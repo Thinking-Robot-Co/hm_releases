@@ -12,24 +12,27 @@ class Camera:
         self.image_counter = 1
         os.makedirs("Images", exist_ok=True)
 
-    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None):
-        """
-        Apply transformation settings for video (and preview).
-        Optionally adjust output dimensions.
-        """
-        # Create a fresh preview configuration.
+    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None, zoom=1.0):
         config = self.picam2.create_preview_configuration()
-        
-        # Add transform settings.
         config["transform"] = {"hflip": hflip, "vflip": vflip, "rotation": rotation}
-        
-        # Optionally set new dimensions (if provided).
+
+        # Example: using hard-coded sensor resolution (replace with your sensor’s actual resolution)
+        sensor_width, sensor_height = 4056, 3040
+
+        # Calculate crop region only if zoom is not 1.0.
+        if zoom != 1.0:
+            # For zooming out, zoom should be less than 1.0
+            new_width = int(sensor_width * zoom)
+            new_height = int(sensor_height * zoom)
+            x = (sensor_width - new_width) // 2
+            y = (sensor_height - new_height) // 2
+            config["crop"] = (x, y, new_width, new_height)
+
         if width is not None and height is not None:
-            # Here, 'size' should be a tuple (width, height)
             config["size"] = (width, height)
-        
-        # Reconfigure the camera with the new settings.
+
         self.picam2.configure(config)
+
 
     def start_preview(self):
         if self.preview_started:
