@@ -12,7 +12,7 @@ class Camera:
         self.image_counter = 1
         os.makedirs("Images", exist_ok=True)
 
-    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None):
+    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None, fps=None, zoom=None):
         """
         Apply transformation settings for video (and preview).
         Optionally adjust output dimensions.
@@ -27,6 +27,13 @@ class Camera:
         if width is not None and height is not None:
             # Here, 'size' should be a tuple (width, height)
             config["size"] = (width, height)
+        if fps is not None:
+            config["controls"] = {"FrameRate": fps}
+        
+        if zoom is not None:
+            config["transform"]["zoom"] = zoom
+
+
         
         # Reconfigure the camera with the new settings.
         self.picam2.configure(config)
@@ -40,7 +47,7 @@ class Camera:
         # (Optional: if you want the preview to always use a specific transform,
         # you can call apply_video_transform here with your default settings.)
         # For example:
-        # self.apply_video_transform(hflip=True, vflip=False, rotation=90, width=1280, height=720)
+        self.apply_video_transform(hflip=True, vflip=False, rotation=90, width=1920, height=1080, fps=30, zoom=(0,0,1,1))
         self.picam2.configure(config)
         self.picam2.start()
         self.preview_started = True
