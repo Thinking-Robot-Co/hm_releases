@@ -12,29 +12,24 @@ class Camera:
         self.image_counter = 1
         os.makedirs("Images", exist_ok=True)
 
-    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None, zoom=1.0):
+    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None):
+        """
+        Apply transformation settings for video (and preview).
+        Optionally adjust output dimensions.
+        """
         # Create a fresh preview configuration.
         config = self.picam2.create_preview_configuration()
-        transform = {"hflip": hflip, "vflip": vflip, "rotation": rotation}
-
-        # If zoom is greater than 1, compute a centered crop.
-        if zoom > 1.0 and width is not None and height is not None:
-            crop_w = int(width / zoom)
-            crop_h = int(height / zoom)
-            # Calculate offsets to center the crop.
-            x_offset = (width - crop_w) // 2
-            y_offset = (height - crop_h) // 2
-            # Assuming Picamera2 supports a crop key (check docs)
-            transform["crop"] = (x_offset, y_offset, crop_w, crop_h)
         
-        config["transform"] = transform
-
-        # Optionally adjust output dimensions.
+        # Add transform settings.
+        config["transform"] = {"hflip": hflip, "vflip": vflip, "rotation": rotation}
+        
+        # Optionally set new dimensions (if provided).
         if width is not None and height is not None:
+            # Here, 'size' should be a tuple (width, height)
             config["size"] = (width, height)
-
+        
+        # Reconfigure the camera with the new settings.
         self.picam2.configure(config)
-
 
     def start_preview(self):
         if self.preview_started:
