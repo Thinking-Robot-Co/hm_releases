@@ -15,39 +15,37 @@ DEVICE_ID = "raspberry_pi_01"
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Full Sensor Wide View Recorder")
+        self.setWindowTitle("Full Sensor View Video Recorder")
         self.resize(1280, 720)
 
         self.picam2 = Picamera2()
-
-        # Get sensor modes and use the first one (assumed to be full sensor resolution).
-        sensor_modes = self.picam2.sensor_modes
-        if sensor_modes:
-            sensor_mode = sensor_modes[0]
-            # Extract width and height from the sensor mode's "size"
-            try:
-                full_width, full_height = sensor_mode["size"]
-            except Exception:
-                # In case "size" is a Size object
-                full_width = sensor_mode["size"].width
-                full_height = sensor_mode["size"].height
-        else:
-            full_width, full_height = 640, 480  # fallback values
-
-        # Create default preview configuration.
-        config = self.picam2.create_preview_configuration()
+        
+        # Optionally, inspect available sensor modes:
+        # sensor_modes = self.picam2.sensor_modes
+        # print("Available sensor modes:", sensor_modes)
+        # If you know which sensor mode libcamera-hello uses, you can select it here.
+        # For example, to use the first available sensor mode:
+        # chosen_mode = sensor_modes[0]['id'] if sensor_modes else None
+        
+        # Use the video configuration (which often matches libcamera-hello) and explicitly set the ROI to full sensor.
+        config = self.picam2.create_video_configuration()
+        # Set transform: no flips, no rotation, and full sensor ROI.
+        config["transform"] = {
+            "hflip": False,
+            "vflip": False,
+            "rotation": 0,
+            "roi": (0.0, 0.0, 1.0, 1.0)  # (x, y, width, height) in normalized coordinates.
+        }
         self.picam2.configure(config)
-        # Force full sensor view by setting ScalerCrop to the sensor's full resolution.
-        self.picam2.set_controls({"ScalerCrop": (0, 0, full_width, full_height)})
-
-        # Create preview widget.
+        
+        # Create and start the preview widget.
         self.preview_widget = QGlPicamera2(self.picam2, keep_ar=True)
         self.picam2.start()
 
         self.recording = False
         self.video_file = None
 
-        # Build GUI layout.
+        # Build a simple GUI.
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
@@ -87,11 +85,17 @@ class MainWindow(QMainWindow):
         if not self.video_file or not os.path.exists(self.video_file):
             self.status_label.setText("No video file to upload.")
             return
+
         self.status_label.setText("Uploading video...")
         try:
             with open(self.video_file, "rb") as f:
                 files = {"video": f}
-                data = {"device_id": DEVICE_ID, "file_type": "video", "start_time": "", "end_time": ""}
+                data = {
+                    "device_id": DEVICE_ID,
+                    "file_type": "video",
+                    "start_time": "",  # Optionally, add timing details.
+                    "end_time": ""
+                }
                 headers = {"X-API-KEY": API_KEY}
                 response = requests.post(UPLOAD_URL, headers=headers, files=files, data=data)
             if response.status_code == 200:
