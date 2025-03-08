@@ -13,60 +13,46 @@ class Camera:
         os.makedirs("Images", exist_ok=True)
 
     def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None, fps=None, digital_zoom=(0.0, 0.0, 1.0, 1.0)):
-        """
-        Configures the preview transformation and optionally sets resolution, FPS, and digital zoom.
-        
-        Parameters:
-        hflip (bool): Horizontal flip.
-        vflip (bool): Vertical flip.
-        rotation (int): Rotation angle in degrees (must be 0, 90, 180, or 270).
-        width (int): Desired output width.
-        height (int): Desired output height.
-        fps (int): Desired frames per second (if supported by the sensor).
-        digital_zoom (tuple): Normalized zoom region (x, y, width, height). (0, 0, 1, 1) is full sensor view.
-        """
         # Create a fresh preview configuration.
         config = self.picam2.create_preview_configuration()
         
-        # IMPORTANT: Use 'rotate' instead of 'rotation'
+        # Use 'rotate' as the key (Picamera2 expects "rotate").
         config["transform"] = {"hflip": hflip, "vflip": vflip, "rotate": rotation}
         
-        # Set resolution if provided.
         if width is not None and height is not None:
             config["size"] = (width, height)
         
-        # Apply the new configuration.
+        # Apply the configuration.
         self.picam2.configure(config)
         
-        # Set digital zoom (full sensor view when using (0,0,1,1)).
+        # Set additional controls.
         self.picam2.set_controls({"DigitalZoom": digital_zoom})
-        
-        # Optionally, set the frame rate if provided.
         if fps is not None:
             self.picam2.set_controls({"FrameRate": fps})
+
 
 
     def start_preview(self):
         if self.preview_started:
             return self.preview_widget
 
-        # Optionally adjust the preview settings here:
+        # Create the preview widget.
+        self.preview_widget = QGlPicamera2(self.picam2, keep_ar=True)
+        
+        # Apply your desired transform settings.
         self.apply_video_transform(
-            hflip=False,
+            hflip=True,
             vflip=False,
-            rotation=0,
-            width=1920,
-            height=1080,
-            fps=30,
-            digital_zoom=(0.0, 0.0, 1.0, 1.0)
+            rotation=90,           # Allowed values: 0, 90, 180, or 270.
+            width=1280,
+            height=720
         )
         
-        self.preview_widget = QGlPicamera2(self.picam2, keep_ar=True)
-        config = self.picam2.create_preview_configuration()
-        self.picam2.configure(config)
+        # Start the camera with the applied configuration.
         self.picam2.start()
         self.preview_started = True
         return self.preview_widget
+
 
 		
     def stop_preview(self):
