@@ -161,22 +161,12 @@ class VideoRecorder:
             # Non-audio mode: use the standard segmentation monitoring.
             self.video_start_time = datetime.datetime.now()
             self.current_video_file = self.generate_video_filename()
-            # Update the transform settings here:
-            self.camera.apply_video_transform(
-                hflip=True,
-                vflip=False,
-                rotation=90,
-                width=1920,          # Change resolution as needed.
-                height=1080,
-                fps=30,              # Set desired FPS.
-                digital_zoom=(0.0, 0.0, 1.0, 1.0)  # (0,0,1,1) uses full sensor view.
-            )
+            self.camera.apply_video_transform(hflip=True, vflip=False, rotation=90, width=1280, height=720)
             self.camera.picam2.start_and_record_video(self.current_video_file)
             self.segments.append(self.current_video_file)
             self.stop_monitor = False
             self.monitor_thread = threading.Thread(target=self.monitor_video_size, daemon=True)
             self.monitor_thread.start()
-
 
     def monitor_video_size(self):
         while self.recording and not self.stop_monitor:

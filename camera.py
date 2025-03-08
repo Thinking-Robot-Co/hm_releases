@@ -12,52 +12,39 @@ class Camera:
         self.image_counter = 1
         os.makedirs("Images", exist_ok=True)
 
-    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None, fps=None, digital_zoom=(0.0, 0.0, 1.0, 1.0)):
+    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None):
+        """
+        Apply transformation settings for video (and preview).
+        Optionally adjust output dimensions.
+        """
         # Create a fresh preview configuration.
         config = self.picam2.create_preview_configuration()
         
-        # Set transform as a tuple: (hflip, vflip, rotation)
-        config["transform"] = (hflip, vflip, rotation)
+        # Add transform settings.
+        config["transform"] = {"hflip": hflip, "vflip": vflip, "rotation": rotation}
         
-        # Set resolution if provided.
+        # Optionally set new dimensions (if provided).
         if width is not None and height is not None:
+            # Here, 'size' should be a tuple (width, height)
             config["size"] = (width, height)
         
-        # Apply the configuration.
+        # Reconfigure the camera with the new settings.
         self.picam2.configure(config)
-        
-        # Set digital zoom (full sensor view when using (0,0,1,1)).
-        self.picam2.set_controls({"DigitalZoom": digital_zoom})
-        
-        # Optionally, set the frame rate if provided.
-        if fps is not None:
-            self.picam2.set_controls({"FrameRate": fps})
-
-
-
 
     def start_preview(self):
         if self.preview_started:
             return self.preview_widget
 
-        # Create the preview widget.
         self.preview_widget = QGlPicamera2(self.picam2, keep_ar=True)
-        
-        # Apply your desired transform settings.
-        self.apply_video_transform(
-            hflip=True,
-            vflip=False,
-            rotation=90,           # Allowed values: 0, 90, 180, or 270.
-            width=1280,
-            height=720
-        )
-        
-        # Start the camera with the applied configuration.
+        config = self.picam2.create_preview_configuration()
+        # (Optional: if you want the preview to always use a specific transform,
+        # you can call apply_video_transform here with your default settings.)
+        # For example:
+        # self.apply_video_transform(hflip=True, vflip=False, rotation=90, width=1280, height=720)
+        self.picam2.configure(config)
         self.picam2.start()
         self.preview_started = True
         return self.preview_widget
-
-
 		
     def stop_preview(self):
         if self.preview_started:
