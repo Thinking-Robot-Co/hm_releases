@@ -12,7 +12,16 @@ os.makedirs(VIDEOS_DIR, exist_ok=True)
 AUDIOS_DIR = "Audios"
 os.makedirs(AUDIOS_DIR, exist_ok=True)
 
-def format_timestamp():
+FAILED_DIR = "failed_to_upload"
+FAILED_IMAGES_DIR = os.path.join(FAILED_DIR, "Images")
+FAILED_VIDEOS_DIR = os.path.join(FAILED_DIR, "Videos")
+FAILED_AUDIOS_DIR = os.path.join(FAILED_DIR, "Audios")
+
+os.makedirs(FAILED_IMAGES_DIR, exist_ok=True)
+os.makedirs(FAILED_VIDEOS_DIR, exist_ok=True)
+os.makedirs(FAILED_AUDIOS_DIR, exist_ok=True)
+
+def format_timestamp(   ):
     return datetime.datetime.now().strftime("%d%b%y_%H%M%S").lower()
 
 def get_image_filename(device_id="helmet", prefix="img"):

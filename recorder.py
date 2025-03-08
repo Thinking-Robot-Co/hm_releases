@@ -183,30 +183,35 @@ class VideoRecorder:
             time.sleep(1)
 
     def _record_with_segmentation(self):
-        # Segmented recording loop for merged video+audio.
         while self.recording:
             self.video_start_time = datetime.datetime.now()
             video_file = self.generate_video_filename()
+            
             # Start video segment.
             self.camera.picam2.start_and_record_video(video_file)
+            
             # Start corresponding audio segment.
             self.audio_recorder.start_segmented_recording()
+            
             # Monitor video file size.
             while self.recording:
                 if os.path.exists(video_file) and os.path.getsize(video_file) >= self.segment_threshold:
                     break
                 time.sleep(1)
-            try:
-                self.camera.picam2.stop_recording()
-            except Exception as e:
-                print("Error stopping video recording:", e)
+
+            # Stop the current segment
+            self.camera.picam2.stop_recording()
             audio_file = self.audio_recorder.stop_segmented_recording()
+            
+            # Merge video and audio
             merged_file = self.merge_video_audio(video_file, audio_file)
             if merged_file:
                 self.segments.append(merged_file)
             else:
                 self.segments.append(video_file)
-        # End segmentation loop.
+            
+            # Increment the chunk number correctly
+            self.chunk_num += 1
 
     def stop_recording(self):
         if not self.recording:
@@ -239,6 +244,7 @@ class VideoRecorder:
                 final_name = seg
             final_segments.append(final_name)
         self.session_counter += 1
+        self.chunk_num = 1  # Reset chunk number for new session
         return final_segments
 
     def merge_video_audio(self, video_file, audio_file):
@@ -263,3 +269,4 @@ class VideoRecorder:
         except subprocess.CalledProcessError as e:
             print("Error during merging:", e)
             return None
+
