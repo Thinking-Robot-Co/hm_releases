@@ -20,18 +20,30 @@ class Camera:
         # Create a fresh preview configuration.
         config = self.picam2.create_preview_configuration()
         
-        # Add transform settings.
-        config["transform"] = {"hflip": hflip, "vflip": vflip, "rotation": rotation}
+        # Set transform settings.
+        config["transform"] = {
+            "hflip": int(hflip),    # Use 0 or 1 instead of Boolean.
+            "vflip": int(vflip),
+            "rotation": rotation
+        }
         
-        # Optionally set new dimensions (if provided).
+        # Set resolution if provided.
         if width is not None and height is not None:
-            # Here, 'size' should be a tuple (width, height)
             config["size"] = (width, height)
+        
+        # Set FPS if provided.
         if fps is not None:
             config["controls"] = {"FrameRate": fps}
         
+        # Set crop (for zoom) if provided. Use floats.
         if zoom is not None:
-            config["crop"] = zoom
+            # Ensure the crop values are floats (e.g., (0.0, 0.0, 1.0, 1.0) for full sensor view).
+            crop = tuple(float(x) for x in zoom)
+            config["crop"] = crop
+
+        # Apply the configuration.
+        self.picam2.configure(config)
+
 
 
         
@@ -43,15 +55,19 @@ class Camera:
             return self.preview_widget
 
         self.preview_widget = QGlPicamera2(self.picam2, keep_ar=True)
-        config = self.picam2.create_preview_configuration()
-        # (Optional: if you want the preview to always use a specific transform,
-        # you can call apply_video_transform here with your default settings.)
-        # For example:
-        self.apply_video_transform(hflip=True, vflip=False, rotation=90, width=3840, height=2160, fps=30, zoom=(0,0,1,1))
-        self.picam2.configure(config)
+        self.apply_video_transform(
+            hflip=True,
+            vflip=False,
+            rotation=90,
+            width=3840,       # 4K resolution width
+            height=2160,      # 4K resolution height
+            fps=30,           # Frames per second
+            zoom=(0.0, 0.0, 1.0, 1.0)  # Full sensor view (no digital zoom)
+        )
         self.picam2.start()
         self.preview_started = True
         return self.preview_widget
+
 		
     def stop_preview(self):
         if self.preview_started:
