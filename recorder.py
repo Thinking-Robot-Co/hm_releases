@@ -233,10 +233,11 @@ class VideoRecorder:
         start_str = self.video_start_time.strftime("%d%b%Y_%H%M%S").lower()
         end_str = video_end_time.strftime("%d%b%Y_%H%M%S").lower()
         final_segments = []
-        for seg in self.segments:
+        # Use index-based naming for each segment
+        for idx, seg in enumerate(self.segments, start=1):
             prefix = "merged" if self.with_audio else "vdo"
             final_name = os.path.join("Videos", 
-                f"{prefix}_{self.session_counter}_{self.chunk_num}_{start_str}_to_{end_str}.mp4")
+                f"{prefix}_{self.session_counter}_{idx}_{start_str}_to_{end_str}.mp4")
             try:
                 os.rename(seg, final_name)
             except Exception as e:
@@ -244,8 +245,9 @@ class VideoRecorder:
                 final_name = seg
             final_segments.append(final_name)
         self.session_counter += 1
-        self.chunk_num = 1  # Reset chunk number for new session
+        self.chunk_num = 1  # Reset chunk number for new session if needed.
         return final_segments
+
 
     def merge_video_audio(self, video_file, audio_file):
         video_start_str = self.video_start_time.strftime("%d%b%Y_%H%M%S").lower()

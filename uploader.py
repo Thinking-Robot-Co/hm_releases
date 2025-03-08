@@ -9,6 +9,9 @@ UPLOAD_URL = "https://centrix.co.in/v_api/upload"
 HEADERS = {"X-API-KEY": "DDjgMfxLqhxbNmaBoTkfBJkhMxNxkPwMgGjPUwCOaJRCBrvtUX"}
 
 def handle_failed_upload(file_path, file_type):
+    if not os.path.exists(file_path):
+        print(f"File {file_path} does not exist, cannot move.")
+        return
     if file_type == "image":
         target_dir = FAILED_IMAGES_DIR
     elif file_type == "audio":
@@ -23,6 +26,7 @@ def handle_failed_upload(file_path, file_type):
         print(f"Moved failed upload to {target_dir}")
     except Exception as e:
         print(f"Failed to move file {file_path}: {e}")
+
 
 def upload_file(file_path, file_type, start_time="", end_time=""):
     try:
