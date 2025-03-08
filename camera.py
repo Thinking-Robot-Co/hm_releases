@@ -31,7 +31,7 @@ class Camera:
             config["controls"] = {"FrameRate": fps}
         
         if zoom is not None:
-            config["transform"]["zoom"] = zoom
+            config["crop"] = zoom
 
 
         
