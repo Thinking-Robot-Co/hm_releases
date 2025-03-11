@@ -36,7 +36,9 @@ class Camera:
             return self.preview_widget
 
         self.preview_widget = QGlPicamera2(self.picam2, keep_ar=True)
-        config = self.picam2.create_preview_configuration()
+        # config = self.picam2.create_preview_configuration()
+        config = self.picam2.create_preview_configuration(sensor={'output_size': (1296, 972)})
+
         # (Optional: if you want the preview to always use a specific transform,
         # you can call apply_video_transform here with your default settings.)
         # For example:

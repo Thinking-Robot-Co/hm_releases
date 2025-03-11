@@ -163,7 +163,7 @@ class VideoRecorder:
             # Non-audio mode: use the standard segmentation monitoring.
             self.video_start_time = datetime.datetime.now()
             self.current_video_file = self.generate_video_filename()
-            self.camera.apply_video_transform(hflip=True, vflip=False, rotation=90, width=1920, height=1080)
+            self.camera.apply_video_transform(hflip=True, vflip=False, rotation=90)
             self.camera.picam2.start_and_record_video(self.current_video_file)
             self.segments.append(self.current_video_file)
             self.stop_monitor = False
