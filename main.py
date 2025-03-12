@@ -175,15 +175,15 @@ class MainWindow(QMainWindow):
             self.video_recording = True
             self.video_btn.setText("Stop Video")
             self.status_label.setText("Video recording started...")
-        else:
-            segments = self.video_recorder.stop_recording()
+        else:	
+            segments, start_time, end_time = self.video_recorder.stop_recording()
             self.video_recording = False
             self.video_btn.setText("Start Video")
             if record_audio_with_video:
                 if segments:
                     msg = "Video segments merged & recorded: " + ", ".join(segments)
                     for mf in segments:
-                        success, resp = upload_video(mf, "", "")
+                        success, resp = upload_video(mf, start_time, end_time)
                         if success:
                             os.remove(mf)
                     self.status_label.setText(msg)
