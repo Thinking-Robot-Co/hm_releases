@@ -1,165 +1,209 @@
 #!/usr/bin/env python3
-import subprocess
-import time
-import bluetooth
+
+### THIS IS SOMETHING NEW ###
+import sys
 import threading
-import dbus
-import dbus.exceptions
-import dbus.mainloop.glib
-import dbus.service
-import gi
+import os
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget,
+    QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QCheckBox
+)
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
+from camera import Camera
+from recorder import AudioRecorder, VideoRecorder
+from uploader import upload_image, upload_audio, upload_video
+from gpio_handler import GPIOHandler
+# Import the failed-to-upload directory constants from utils.py
+from utils import FAILED_IMAGES_DIR, FAILED_VIDEOS_DIR, FAILED_AUDIOS_DIR
 
-gi.require_version('GLib', '2.0')
-from gi.repository import GLib
+class MainWindow(QMainWindow):
+    imageCaptured = pyqtSignal(str)
 
-AGENT_INTERFACE = "org.bluez.Agent1"
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Construction Site Helmet - Preview")
+        self.showFullScreen()
 
-########################################
-# 1) AUTO-ACCEPT AGENT IMPLEMENTATION
-########################################
-class AutoAgent(dbus.service.Object):
-    @dbus.service.method(AGENT_INTERFACE, in_signature="", out_signature="")
-    def Release(self):
-        print("[Agent] Release called")
-        pass
+        self.imageCaptured.connect(self.finish_capture)
 
-    @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="")
-    def Cancel(self, device_path):
-        print(f"[Agent] Cancel called for {device_path}")
-        pass
+        # Initialize camera.
+        self.camera = Camera()
+        self.preview_widget = self.camera.start_preview()
 
-    @dbus.service.method(AGENT_INTERFACE, in_signature="os", out_signature="")
-    def AuthorizeService(self, device, uuid):
-        print(f"[Agent] AuthorizeService: {device}, UUID={uuid} -> auto-accept")
-        return
+        # Initialize recorders.
+        self.audio_recorder = AudioRecorder()
+        # Pass audio_recorder into VideoRecorder for segmented merged recording.
+        self.video_recorder = VideoRecorder(self.camera, self.audio_recorder)
+        self.audio_recording = False
+        self.video_recording = False
 
-    @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="s")
-    def RequestPinCode(self, device):
-        # Return a fixed PIN for pairing.
-        print(f"[Agent] RequestPinCode for {device} -> returning '0000'")
-        return "0000"
+        # Set up layout.
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-    @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="u")
-    def RequestPasskey(self, device):
-        print(f"[Agent] RequestPasskey for {device} -> returning 0")
-        return dbus.UInt32(0)
+        main_layout.addWidget(self.preview_widget, stretch=1)
 
-    @dbus.service.method(AGENT_INTERFACE, in_signature="ouq", out_signature="")
-    def DisplayPasskey(self, device, passkey, entered):
-        print(f"[Agent] DisplayPasskey: {device}, passkey={passkey}, entered={entered}")
+        # Bottom controls.
+        bottom_layout = QHBoxLayout()
+        bottom_layout.setSpacing(10)
 
-    @dbus.service.method(AGENT_INTERFACE, in_signature="ou", out_signature="")
-    def RequestConfirmation(self, device, passkey):
-        print(f"[Agent] RequestConfirmation: {device}, passkey={passkey} -> auto-confirm")
-        return
+        # Video toggle button.
+        self.video_btn = QPushButton("Start Video")
+        self.video_btn.setFixedSize(150, 40)
+        self.video_btn.clicked.connect(self.toggle_video_recording)
+        bottom_layout.addWidget(self.video_btn)
 
-def run_auto_agent():
-    """
-    Initializes the D-Bus event loop and registers the auto-accept agent.
-    """
-    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-    system_bus = dbus.SystemBus()
+        # Checkbox for recording audio with video.
+        self.record_audio_checkbox = QCheckBox("Record Audio with Video")
+        self.record_audio_checkbox.setChecked(True)
+        bottom_layout.addWidget(self.record_audio_checkbox)
 
-    # Use "DisplayYesNo" to allow auto-confirmation
-    agent_path = "/test/auto_agent"
-    capability = "DisplayYesNo"  # This mode will display a passkey, then auto-confirm it
+        # Capture Image button.
+        self.capture_btn = QPushButton("Capture Image")
+        self.capture_btn.setFixedSize(150, 40)
+        self.capture_btn.clicked.connect(self.handle_capture_image)
+        bottom_layout.addWidget(self.capture_btn)
 
-    agent = AutoAgent(system_bus, agent_path)
-    agent_manager = dbus.Interface(
-        system_bus.get_object("org.bluez", "/org/bluez"),
-        "org.bluez.AgentManager1"
-    )
-    agent_manager.RegisterAgent(agent_path, capability)
-    print(f"[Agent] Registered with capability: {capability}")
-    agent_manager.RequestDefaultAgent(agent_path)
-    print("[Agent] Auto-accept agent is now the default.")
+        # Audio toggle button.
+        self.audio_btn = QPushButton("Start Audio")
+        self.audio_btn.setFixedSize(150, 40)
+        self.audio_btn.clicked.connect(self.toggle_audio_recording)
+        bottom_layout.addWidget(self.audio_btn)
 
-    loop = GLib.MainLoop()
-    loop.run()
+        bottom_layout.addStretch()
 
-########################################
-# 2) RFCOMM SERVER LOGIC
-########################################
-def setup_bluetooth():
-    # Optional: register SPP with sdptool
-    print("[Setup] Registering Serial Port Profile (SP) with sdptool...")
-    try:
-        subprocess.run(["sudo", "sdptool", "add", "SP"], check=True)
-    except subprocess.CalledProcessError as e:
-        print("[Setup] sdptool error (can often be ignored):", e)
+        # Close Session button.
+        self.close_btn = QPushButton("Close Session")
+        self.close_btn.setFixedSize(150, 40)
+        self.close_btn.clicked.connect(self.close_session)
+        bottom_layout.addWidget(self.close_btn)
 
-    # Configure bluetoothctl settings.
-    bt_commands = "\n".join([
-        "agent off",          # Turn off any built-in agent since we use our custom one
-        "default-agent",
-        "power on",
-        "pairable on",
-        "discoverable on",
-        "quit"
-    ])
-    print("[Setup] Configuring bluetoothctl...")
-    try:
-        subprocess.run(["bluetoothctl"], input=bt_commands, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        print("[Setup] bluetoothctl config error:", e)
-    print("[Setup] Bluetooth adapter should now be powered, pairable, and discoverable.")
-    time.sleep(2)
+        main_layout.addLayout(bottom_layout)
 
-def start_rfcomm_server():
-    # Create an RFCOMM Bluetooth socket.
-    server_sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
-    server_sock.bind(("", bluetooth.PORT_ANY))
-    server_sock.listen(1)
+        self.status_label = QLabel("Ready")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setStyleSheet("background-color: #EFEFEF; padding: 5px;")
+        main_layout.addWidget(self.status_label)
 
-    port = server_sock.getsockname()[1]
-    print(f"[RFCOMM] Server listening on RFCOMM channel {port}")
+        # Initialize GPIO handler.
+        self.gpio_handler = GPIOHandler(self)
 
-    # Advertise the service so that your phone sees a Serial Port Profile.
-    try:
-        bluetooth.advertise_service(
-            server_sock,
-            "MyAutoAgentSPP",
-            service_classes=[bluetooth.SERIAL_PORT_CLASS],
-            profiles=[bluetooth.SERIAL_PORT_PROFILE]
-        )
-    except Exception as e:
-        print("[RFCOMM] Warning: Service advertisement failed:", e)
+        # Attempt to re-upload any previously failed files on startup.
+        self.attempt_reupload_failed_files()
 
-    print("[RFCOMM] Waiting for an RFCOMM connection from your phone...")
-    client_sock, client_info = server_sock.accept()
-    print("[RFCOMM] Accepted connection from:", client_info)
+    def attempt_reupload_failed_files(self):
+        # Define directories to scan for failed uploads.
+        failed_dirs = {
+            "image": FAILED_IMAGES_DIR,
+            "audio": FAILED_AUDIOS_DIR,
+            "video": FAILED_VIDEOS_DIR,
+        }
 
-    try:
-        while True:
-            data = client_sock.recv(1024)
-            if not data:
-                break
-            command = data.decode('utf-8').strip()
-            print("[RFCOMM] Received command:", command)
-            # Insert logic here to handle commands (e.g., control your camera)
-    except OSError as e:
-        print("[RFCOMM] Connection error:", e)
-    finally:
-        print("[RFCOMM] Closing connection.")
-        client_sock.close()
-        server_sock.close()
+        # Iterate over file types and directories.
+        for file_type, failed_dir in failed_dirs.items():
+            if not os.path.exists(failed_dir):
+                continue
 
-########################################
-# 3) MAIN ENTRY POINT
-########################################
-def main():
-    # Start the auto-agent in a background thread.
-    agent_thread = threading.Thread(target=run_auto_agent, daemon=True)
-    agent_thread.start()
+            for file_name in os.listdir(failed_dir):
+                file_path = os.path.join(failed_dir, file_name)
+                print(f"Attempting re-upload of {file_path}")
 
-    # Give the agent time to register.
-    time.sleep(2)
+                if file_type == "image":
+                    success, resp = upload_image(file_path)
+                elif file_type == "audio":
+                    success, resp = upload_audio(file_path)
+                elif file_type == "video":
+                    success, resp = upload_video(file_path)
 
-    # Setup Bluetooth adapter settings.
-    setup_bluetooth()
+                if success:
+                    os.remove(file_path)
+                    print(f"Successfully re-uploaded and deleted {file_path}")
+                else:
+                    print(f"Failed again to upload {file_path}: {resp}")
 
-    # Start the RFCOMM server.
-    start_rfcomm_server()
+    def handle_capture_image(self):
+        self.capture_btn.setEnabled(False)
+        threading.Thread(target=self.capture_image_worker, daemon=True).start()
+
+    def capture_image_worker(self):
+        msg = ""
+        try:
+            image_path = self.camera.capture_image()
+            success, resp = upload_image(image_path)
+            if success:
+                os.remove(image_path)
+                msg = f"Image captured & uploaded: {image_path}"
+            else:
+                msg = f"Image captured but upload failed: {resp}"
+        except Exception as e:
+            msg = f"Image capture error: {e}"
+        finally:
+            self.imageCaptured.emit(msg)
+
+    @pyqtSlot(str)
+    def finish_capture(self, msg):
+        self.status_label.setText(msg)
+        self.capture_btn.setEnabled(True)
+
+    def toggle_audio_recording(self):
+        if not self.audio_recording:
+            self.audio_recorder.start_recording()
+            self.audio_recording = True
+            self.audio_btn.setText("Stop Audio")
+            self.status_label.setText("Audio recording started...")
+        else:
+            audio_file = self.audio_recorder.stop_recording()
+            self.audio_recording = False
+            self.audio_btn.setText("Start Audio")
+            success, resp = upload_audio(audio_file, "", "")
+            if success:
+                os.remove(audio_file)
+                self.status_label.setText(f"Audio recorded & uploaded: {audio_file}")
+            else:
+                self.status_label.setText(f"Audio recorded but upload failed: {resp}")
+
+    def toggle_video_recording(self):
+        record_audio_with_video = self.record_audio_checkbox.isChecked()
+        # Re-attempt to upload any failed files before starting a new session.
+        self.attempt_reupload_failed_files()
+
+        if not self.video_recording:
+            self.video_recorder.start_recording(with_audio=record_audio_with_video)
+            self.video_recording = True
+            self.video_btn.setText("Stop Video")
+            self.status_label.setText("Video recording started...")
+        else:	
+            segments, start_time, end_time = self.video_recorder.stop_recording()
+            self.video_recording = False
+            self.video_btn.setText("Start Video")
+            if record_audio_with_video:
+                if segments:
+                    msg = "Video segments merged & recorded: " + ", ".join(segments)
+                    for mf in segments:
+                        success, resp = upload_video(mf, start_time, end_time)
+                        if success:
+                            os.remove(mf)
+                    self.status_label.setText(msg)
+                else:
+                    self.status_label.setText("No video segments recorded.")
+            else:
+                seg_info = ", ".join(segments)
+                self.status_label.setText(f"Video recorded. Segments: {seg_info}")
+
+    def close_session(self):
+        self.camera.stop_preview()
+        if self.audio_recording:
+            self.audio_recorder.stop_recording()
+        if self.video_recording:
+            self.video_recorder.stop_recording()
+        self.gpio_handler.cleanup()
+        QApplication.quit()
 
 if __name__ == "__main__":
-    main()
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec_())
