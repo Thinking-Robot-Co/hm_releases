@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Smart Helmet Interface</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    #preview { width: 100%; max-width: 800px; border: 1px solid #ccc; }
+    .btn { padding: 10px 20px; margin: 5px; }
+    #status { margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Smart Helmet Interface</h1>
+  <img id="preview" src="/video_feed" alt="Camera Preview">
+  <div>
+    <button class="btn" onclick="captureImage()">Capture Image</button>
+    <button class="btn" id="videoBtn" onclick="toggleVideo()">Start Video</button>
+    <button class="btn" id="audioBtn" onclick="toggleAudio()">Start Audio</button>
+    <!-- Checkbox checked by default -->
+    <label><input type="checkbox" id="withAudio" checked> Record Audio with Video</label>
+  </div>
+  <div id="status"></div>
+  
+  <script>
+    let videoRecording = false;
+    let audioRecording = false;
+    
+    function updateStatus(msg) {
+      document.getElementById('status').innerText = msg;
+    }
+    
+    function captureImage() {
+      fetch('/capture_image', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => updateStatus(data.message))
+        .catch(err => updateStatus('Error: ' + err));
+    }
+    
+    function toggleVideo() {
+      if (!videoRecording) {
+        let withAudio = document.getElementById("withAudio").checked;
+        fetch('/start_video', {
+          method: 'POST',
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({with_audio: withAudio})
+        })
+          .then(response => response.json())
+          .then(data => {
+              updateStatus(data.message);
+              if(data.status === "success"){
+                  videoRecording = true;
+                  document.getElementById("videoBtn").innerText = "Stop Video";
+              }
+          })
+          .catch(err => updateStatus('Error: ' + err));
+      } else {
+        fetch('/stop_video', { method: 'POST' })
+          .then(response => response.json())
+          .then(data => {
+              updateStatus(data.message);
+              if(data.status === "success"){
+                  videoRecording = false;
+                  document.getElementById("videoBtn").innerText = "Start Video";
+              }
+          })
+          .catch(err => updateStatus('Error: ' + err));
+      }
+    }
+    
+    function toggleAudio() {
+      if (!audioRecording) {
+        fetch('/start_audio', { method: 'POST' })
+          .then(response => response.json())
+          .then(data => {
+              updateStatus(data.message);
+              if(data.status === "success"){
+                  audioRecording = true;
+                  document.getElementById("audioBtn").innerText = "Stop Audio";
+              }
+          })
+          .catch(err => updateStatus('Error: ' + err));
+      } else {
+        fetch('/stop_audio', { method: 'POST' })
+          .then(response => response.json())
+          .then(data => {
+              updateStatus(data.message);
+              if(data.status === "success"){
+                  audioRecording = false;
+                  document.getElementById("audioBtn").innerText = "Start Audio";
+              }
+          })
+          .catch(err => updateStatus('Error: ' + err));
+      }
+    }
+  </script>
+</body>
+</html>
