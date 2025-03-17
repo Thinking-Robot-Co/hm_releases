@@ -56,7 +56,7 @@ class VideoRecorder:
                 # Change the output file extension to .mp4
                 self.final_filename = os.path.join(
                     self.output_dir,
-                    f"vdo_{self.session}_{self.video_counter}__{timestamp}_{video_type}.mp4"
+                    f"merged_{self.session}_{self.video_counter}__{timestamp}_{video_type}.mp4"
                 )
                 # Temporary video file – you can keep it as .avi if needed for compatibility,
                 # or change it to .mp4 if your system supports it.
