@@ -1,0 +1,55 @@
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f0f0f0;
+    margin: 0;
+    padding: 0;
+}
+
+.top-bar {
+    background-color: #333;
+    color: #fff;
+    padding: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.top-bar .status {
+    font-size: 14px;
+    flex: 1;
+}
+
+.top-bar .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.top-bar label {
+    font-size: 14px;
+}
+
+.top-bar select, .top-bar button {
+    padding: 5px 10px;
+    font-size: 14px;
+    margin-left: 5px;
+}
+
+.top-bar button {
+    cursor: pointer;
+}
+
+.preview {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+.preview img {
+    max-width: 90%;
+    height: auto;
+    border: 2px solid #333;
+}

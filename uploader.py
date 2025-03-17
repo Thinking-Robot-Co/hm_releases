@@ -1,63 +1,42 @@
-#!/usr/bin/env python3
+# video_uploaded.py
+import subprocess
 import os
-import requests
-import shutil
-from utils import FAILED_IMAGES_DIR, FAILED_VIDEOS_DIR, FAILED_AUDIOS_DIR
+import time
 
-DEVICE_ID = "raspberry_pi_01"
-UPLOAD_URL = "https://centrix.co.in/v_api/upload"
-HEADERS = {"X-API-KEY": "DDjgMfxLqhxbNmaBoTkfBJkhMxNxkPwMgGjPUwCOaJRCBrvtUX"}
-
-def handle_failed_upload(file_path, file_type):
-    if not os.path.exists(file_path):
-        print(f"File {file_path} does not exist, cannot move.")
-        return
-    if file_type == "image":
-        target_dir = FAILED_IMAGES_DIR
-    elif file_type == "audio":
-        target_dir = FAILED_AUDIOS_DIR
-    elif file_type == "video":
-        target_dir = FAILED_VIDEOS_DIR
-    else:
-        return
-    os.makedirs(target_dir, exist_ok=True)
+def merge_video_audio(video_file, audio_file, video_type, session, video_counter):
+    """
+    Merges the given video_file and audio_file into a single output file.
+    The final file will have the naming pattern:
+      vdo_<session>_<video_counter>__<timestamp>_<type>.avi
+    """
+    # Create a new timestamp for the final filename
+    timestamp = time.strftime("%d%b%y_%H%M%S").lower()  # e.g., 17mar25_130702
+    output_filename = os.path.join(
+        os.path.dirname(video_file),
+        f"vdo_{session}_{video_counter}__{timestamp}_{video_type}.avi"
+    )
+    
+    # Build the ffmpeg command.
+    # -y : overwrite output file if exists
+    # -i video_file : input video file
+    # -i audio_file : input audio file
+    # -c:v copy : copy the video stream without re-encoding
+    # -c:a aac : encode audio to AAC (or use copy if compatible)
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_file,
+        "-i", audio_file,
+        "-c:v", "copy",
+        "-c:a", "aac",
+        output_filename
+    ]
+    
+    print("Merging video and audio with command:", " ".join(cmd))
+    
     try:
-        shutil.move(file_path, os.path.join(target_dir, os.path.basename(file_path)))
-        print(f"Moved failed upload to {target_dir}")
-    except Exception as e:
-        print(f"Failed to move file {file_path}: {e}")
-
-
-def upload_file(file_path, file_type, start_time="", end_time=""):
-    try:
-        with open(file_path, "rb") as f:
-            files = {file_type: f} 
-            data = {
-                "device_id": DEVICE_ID,
-                "file_type": file_type,
-                "start_time": start_time,
-                "end_time": end_time
-            }
-            resp = requests.post(UPLOAD_URL, headers=HEADERS, files=files, data=data)
-        if resp.status_code == 200:
-            result = resp.json()
-            if result.get("success"):
-                return True, result
-            else:
-                handle_failed_upload(file_path, file_type)
-                return False, result
-        else:
-            handle_failed_upload(file_path, file_type)
-            return False, {"error": resp.text}
-    except Exception as e:
-        handle_failed_upload(file_path, file_type)
-        return False, {"exception": str(e)}
-
-def upload_image(file_path):
-    return upload_file(file_path, "video")
-
-def upload_video(file_path, start_time="", end_time=""):
-    return upload_file(file_path, "video", start_time, end_time)
-
-def upload_audio(file_path, start_time="", end_time=""):
-    return upload_file(file_path, "video", start_time, end_time)
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        print("Merged file created:", output_filename)
+        return output_filename
+    except subprocess.CalledProcessError as e:
+        print("Error merging audio and video:", e.stderr.decode())
+        return None
