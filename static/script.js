@@ -20,13 +20,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!videoRecording) {
             fetch('/start_recording', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    record_audio: recordAudio,
-                    type: videoType
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ record_audio: recordAudio, type: videoType })
             })
             .then(response => response.json())
             .then(data => {
@@ -58,9 +53,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const imageType = videoTypeSelect.value;
         fetch('/capture_image', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ type: imageType })
         })
         .then(response => response.json())
@@ -79,9 +72,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!audioOnlyRecording) {
             fetch('/start_audio_only', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ type: audioType })
             })
             .then(response => response.json())

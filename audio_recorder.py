@@ -25,6 +25,8 @@ class AudioRecorder:
         self.audio_stream = None
         self.final_filename = None
         self.lock = threading.Lock()
+        self.start_time = None
+        self.end_time = None
 
     def _record_audio_thread(self):
         while self.record_audio_flag:
@@ -46,11 +48,13 @@ class AudioRecorder:
                 )
                 self.audio_frames = []
                 self.p = pyaudio.PyAudio()
-                self.audio_stream = self.p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+                self.audio_stream = self.p.open(format=FORMAT, channels=CHANNELS, rate=RATE,
+                                                input=True, frames_per_buffer=CHUNK)
                 self.record_audio_flag = True
                 self.audio_thread = threading.Thread(target=self._record_audio_thread, daemon=True)
                 self.audio_thread.start()
                 self.recording = True
+                self.start_time = time.strftime("%H:%M:%S")
                 print("Audio-only recording started:", self.final_filename)
                 return self.final_filename
             return None
@@ -71,4 +75,6 @@ class AudioRecorder:
                 wf.writeframes(b''.join(self.audio_frames))
                 wf.close()
                 self.recording = False
+                self.end_time = time.strftime("%H:%M:%S")
                 print("Audio-only recording stopped. Saved as:", self.final_filename)
+                return self.final_filename, self.start_time, self.end_time

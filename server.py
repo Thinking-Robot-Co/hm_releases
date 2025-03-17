@@ -3,6 +3,7 @@ from flask import Flask, Response, render_template, jsonify, request
 import time
 import os
 import cv2
+import uploader
 
 app = Flask(__name__)
 
@@ -44,8 +45,16 @@ def start_recording():
 
 @app.route('/stop_recording', methods=['POST'])
 def stop_recording():
-    video_recorder.stop_recording()
-    status_message = "Video recording stopped."
+    result = video_recorder.stop_recording()  # returns (final_filename, start_time, end_time)
+    if result:
+        final_filename, start_time, end_time = result
+        upload_res = uploader.upload_file(final_filename, start_time, end_time)
+        if upload_res:
+            status_message = "Video recording stopped and uploaded."
+        else:
+            status_message = "Video recording stopped but upload failed."
+    else:
+        status_message = "Video recording stopped."
     return jsonify({'status': status_message})
 
 @app.route('/capture_image', methods=['POST'])
@@ -64,7 +73,14 @@ def capture_image():
     filepath = os.path.join("media", filename)
     cv2.imwrite(filepath, frame_bgr)
     print("Captured image:", filepath)
-    return jsonify({'status': f'Image captured and saved as {filename}'})
+    # For image capture, use the current time as both start and stop times.
+    current_time = time.strftime("%H:%M:%S")
+    upload_res = uploader.upload_file(filepath, current_time, current_time)
+    if upload_res:
+        status_message = f"Image captured and uploaded as {filename}"
+    else:
+        status_message = "Image captured but upload failed."
+    return jsonify({'status': status_message})
 
 # Endpoints for audio-only recording
 @app.route('/start_audio_only', methods=['POST'])
@@ -77,6 +93,14 @@ def start_audio_only():
 
 @app.route('/stop_audio_only', methods=['POST'])
 def stop_audio_only():
-    audio_only_recorder.stop_recording()
-    status_message = "Audio-only recording stopped."
+    result = audio_only_recorder.stop_recording()  # returns (final_filename, start_time, end_time)
+    if result:
+        final_filename, start_time, end_time = result
+        upload_res = uploader.upload_file(final_filename, start_time, end_time)
+        if upload_res:
+            status_message = "Audio-only recording stopped and uploaded."
+        else:
+            status_message = "Audio-only recording stopped but upload failed."
+    else:
+        status_message = "Audio-only recording stopped."
     return jsonify({'status': status_message})
