@@ -7,7 +7,6 @@
 </head>
 <body>
     <div class="top-bar">
-        <div class="status" id="statusBar">Status: Ready</div>
         <div class="controls">
             <label for="audioCheckbox">
                 <input type="checkbox" id="audioCheckbox" checked> Record with Audio (for video)
@@ -33,6 +32,14 @@
     </div>
     <div class="preview">
         <img src="{{ url_for('video_feed') }}" alt="Camera Preview">
+    </div>
+    <div class="status" id="statusBar">Status: Ready</div>
+    <div class="advanced-bar">
+        <button id="zoomInBtn">Zoom In</button>
+        <button id="zoomOutBtn">Zoom Out</button>
+        <button id="rotate90Btn">Rotate +90</button>
+        <button id="rotateNeg90Btn">Rotate -90</button>
+        <button id="resetAdvancedBtn">Reset Advanced</button>
     </div>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>

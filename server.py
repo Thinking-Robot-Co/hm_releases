@@ -3,14 +3,68 @@ from flask import Flask, Response, render_template, jsonify, request
 import time
 import os
 import cv2
+import numpy as np
 import uploader
 
 app = Flask(__name__)
 
-# These globals will be set in main.py
+# Global objects – set in main.py
 image_capturer = None
 video_recorder = None
 audio_only_recorder = None
+
+# Global advanced parameters (applied on the captured frame)
+advanced_params = {
+    "rotation": 180,  # default rotation in degrees
+    "zoom": 1.0       # default zoom (1.0 means no zoom)
+}
+
+def apply_advanced_transformations(frame, params):
+    # Make a copy of the frame
+    transformed = frame.copy()
+    # Apply rotation if needed
+    angle = params.get("rotation", 0)
+    if angle != 0:
+        (h, w) = transformed.shape[:2]
+        center = (w // 2, h // 2)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        transformed = cv2.warpAffine(transformed, M, (w, h))
+    # Apply zoom if needed (zoom>1 means zoom in, crop center)
+    zoom = params.get("zoom", 1.0)
+    if zoom != 1.0:
+        (h, w) = transformed.shape[:2]
+        if zoom > 1.0:
+            new_w, new_h = int(w / zoom), int(h / zoom)
+            start_x = (w - new_w) // 2
+            start_y = (h - new_h) // 2
+            cropped = transformed[start_y:start_y+new_h, start_x:start_x+new_w]
+            transformed = cv2.resize(cropped, (w, h))
+        else:
+            # For zoom < 1, we can simply resize and pad if desired.
+            new_w, new_h = int(w * zoom), int(h * zoom)
+            resized = cv2.resize(transformed, (new_w, new_h))
+            top = (h - new_h) // 2
+            bottom = h - new_h - top
+            left = (w - new_w) // 2
+            right = w - new_w - left
+            transformed = cv2.copyMakeBorder(resized, top, bottom, left, right,
+                                             cv2.BORDER_CONSTANT, value=[0,0,0])
+    return transformed
+
+@app.route('/set_advanced', methods=['POST'])
+def set_advanced():
+    data = request.get_json() or {}
+    if "rotation" in data:
+        try:
+            advanced_params["rotation"] = float(data["rotation"])
+        except:
+            pass
+    if "zoom" in data:
+        try:
+            advanced_params["zoom"] = float(data["zoom"])
+        except:
+            pass
+    return jsonify({"status": "Advanced settings updated", "advanced_params": advanced_params})
 
 def generate_frames():
     while True:
@@ -18,11 +72,15 @@ def generate_frames():
             if image_capturer.latest_frame is None:
                 time.sleep(0.05)
                 continue
-            frame_bgr, jpeg_bytes = image_capturer.latest_frame
+            frame_bgr, _ = image_capturer.latest_frame
+        # Apply advanced transformations (rotation, zoom, etc)
+        transformed_frame = apply_advanced_transformations(frame_bgr, advanced_params)
+        # If video is recording, write the transformed frame
         if video_recorder.recording:
-            video_recorder.write_frame(frame_bgr)
+            video_recorder.write_frame(transformed_frame)
+        ret, jpeg = cv2.imencode('.jpg', transformed_frame)
         yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + jpeg_bytes + b'\r\n')
+               b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
         time.sleep(0.05)
 
 @app.route('/')
@@ -63,6 +121,7 @@ def capture_image():
         if image_capturer.latest_frame is None:
             return jsonify({'status': 'No image available'}), 500
         frame_bgr, _ = image_capturer.latest_frame
+    transformed = apply_advanced_transformations(frame_bgr, advanced_params)
     if not hasattr(capture_image, "img_counter"):
         capture_image.img_counter = 0
     capture_image.img_counter += 1
@@ -71,9 +130,8 @@ def capture_image():
     image_type = data.get("type", "general").lower()
     filename = f"img_{image_capturer.session}_{capture_image.img_counter}__{timestamp}_{image_type}.jpg"
     filepath = os.path.join("media", filename)
-    cv2.imwrite(filepath, frame_bgr)
+    cv2.imwrite(filepath, transformed)
     print("Captured image:", filepath)
-    # For image capture, use the current time as both start and stop times.
     current_time = time.strftime("%H:%M:%S")
     upload_res = uploader.upload_file(filepath, current_time, current_time)
     if upload_res:
@@ -82,7 +140,6 @@ def capture_image():
         status_message = "Image captured but upload failed."
     return jsonify({'status': status_message})
 
-# Endpoints for audio-only recording
 @app.route('/start_audio_only', methods=['POST'])
 def start_audio_only():
     data = request.get_json() or {}

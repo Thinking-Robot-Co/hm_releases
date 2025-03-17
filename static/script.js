@@ -5,14 +5,43 @@ document.addEventListener('DOMContentLoaded', function() {
     const statusBar = document.getElementById('statusBar');
     const audioCheckbox = document.getElementById('audioCheckbox');
     const videoTypeSelect = document.getElementById('videoType');
-
+    
+    // Advanced control buttons
+    const zoomInBtn = document.getElementById('zoomInBtn');
+    const zoomOutBtn = document.getElementById('zoomOutBtn');
+    const rotate90Btn = document.getElementById('rotate90Btn');
+    const rotateNeg90Btn = document.getElementById('rotateNeg90Btn');
+    const resetAdvancedBtn = document.getElementById('resetAdvancedBtn');
+    
     let videoRecording = false;
     let audioOnlyRecording = false;
-
+    
+    // Local copy of advanced parameters (should match server defaults)
+    let advancedParams = {
+        rotation: 180,
+        zoom: 1.0
+    };
+    
     function updateStatus(message) {
         statusBar.textContent = "Status: " + message;
     }
-
+    
+    function sendAdvancedParams() {
+        fetch('/set_advanced', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(advancedParams)
+        })
+        .then(response => response.json())
+        .then(data => {
+            updateStatus("Advanced settings updated.");
+        })
+        .catch(error => {
+            console.error("Error updating advanced settings:", error);
+            updateStatus("Error updating advanced settings.");
+        });
+    }
+    
     // Video recording button
     recordBtn.addEventListener('click', function() {
         const recordAudio = audioCheckbox.checked;
@@ -27,6 +56,7 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 updateStatus(data.status);
                 recordBtn.textContent = 'Stop Video Recording';
+                recordBtn.classList.add('recording');
                 videoRecording = true;
             })
             .catch(error => {
@@ -39,6 +69,7 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 updateStatus(data.status);
                 recordBtn.textContent = 'Start Video Recording';
+                recordBtn.classList.remove('recording');
                 videoRecording = false;
             })
             .catch(error => {
@@ -47,7 +78,7 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     });
-
+    
     // Image capture button
     captureImageBtn.addEventListener('click', function() {
         const imageType = videoTypeSelect.value;
@@ -65,7 +96,7 @@ document.addEventListener('DOMContentLoaded', function() {
             updateStatus('Error capturing image');
         });
     });
-
+    
     // Audio-only recording button
     recordAudioOnlyBtn.addEventListener('click', function() {
         const audioType = videoTypeSelect.value;
@@ -98,5 +129,31 @@ document.addEventListener('DOMContentLoaded', function() {
                 updateStatus('Error stopping audio-only recording');
             });
         }
+    });
+    
+    // Advanced controls
+    zoomInBtn.addEventListener('click', function() {
+        advancedParams.zoom *= 1.1;
+        sendAdvancedParams();
+    });
+    
+    zoomOutBtn.addEventListener('click', function() {
+        advancedParams.zoom /= 1.1;
+        sendAdvancedParams();
+    });
+    
+    rotate90Btn.addEventListener('click', function() {
+        advancedParams.rotation = (advancedParams.rotation + 90) % 360;
+        sendAdvancedParams();
+    });
+    
+    rotateNeg90Btn.addEventListener('click', function() {
+        advancedParams.rotation = (advancedParams.rotation - 90) % 360;
+        sendAdvancedParams();
+    });
+    
+    resetAdvancedBtn.addEventListener('click', function() {
+        advancedParams = { rotation: 180, zoom: 1.0 };
+        sendAdvancedParams();
     });
 });
