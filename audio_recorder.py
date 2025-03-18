@@ -44,7 +44,7 @@ class AudioRecorder:
                 timestamp = time.strftime("%d%b%y_%H%M%S").lower()
                 self.final_filename = os.path.join(
                     self.output_dir,
-                    f"audio_{self.session}_{self.audio_counter}__{timestamp}_{audio_type}.wav"
+                    f"aud_{self.session}_{self.audio_counter}__{timestamp}_{audio_type}.wav"
                 )
                 self.audio_frames = []
                 self.p = pyaudio.PyAudio()
