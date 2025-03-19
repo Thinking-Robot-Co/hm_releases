@@ -58,7 +58,7 @@ class VideoRecorder:
                     self.output_dir,
                     f"merged_{self.session}_{self.video_counter}__{timestamp}_{video_type}.mp4"
                 )
-                # Temporary video file – you can keep it as .avi if needed for compatibility,
+                # Temporary video file â€“ you can keep it as .avi if needed for compatibility,
                 # or change it to .mp4 if your system supports it.
                 self.temp_video_filename = os.path.join(
                     self.output_dir,
@@ -94,32 +94,39 @@ class VideoRecorder:
     def stop_recording(self):
         with self.lock:
             if self.recording:
+                # Release the video writer and mark recording as finished.
                 self.video_writer.release()
                 self.video_writer = None
                 self.recording = False
 
                 if self.record_audio_flag:
+                    # Stop audio recording
                     self.record_audio_flag = False
                     if self.audio_thread is not None:
                         self.audio_thread.join()
                     self.audio_stream.stop_stream()
                     self.audio_stream.close()
                     self.p.terminate()
+                    # Write the captured audio frames to file.
                     wf = wave.open(self.temp_audio_filename, 'wb')
                     wf.setnchannels(CHANNELS)
                     wf.setsampwidth(self.p.get_sample_size(FORMAT))
                     wf.setframerate(RATE)
                     wf.writeframes(b''.join(self.audio_frames))
                     wf.close()
-                    # Merge using ffmpeg – final output now in MP4 container.
+
+                    # Merge video and audio using ffmpeg.
+                    # -shortest stops encoding when the shortest stream ends (prevents trailing freeze).
+                    # -preset ultrafast speeds up the merging process.
                     merge_cmd = [
                         'ffmpeg', '-y',
                         '-i', self.temp_video_filename,
                         '-i', self.temp_audio_filename,
-                        '-c:v', 'libx264', 
-                        '-preset', 'veryfast',
+                        '-c:v', 'libx264',
+                        '-preset', 'ultrafast',  # Changed preset for faster merging.
                         '-crf', '23',
                         '-c:a', 'aac',
+                        '-shortest',  # Ensure merging stops at the shortest stream.
                         self.final_filename
                     ]
 
@@ -132,6 +139,7 @@ class VideoRecorder:
                     print("Video saved as:", self.final_filename)
                 self.end_time = time.strftime("%H:%M:%S")
                 return self.final_filename, self.start_time, self.end_time
+
 
 
     def write_frame(self, frame_bgr):
