@@ -1,69 +1,63 @@
-# uploader.py
-import requests
+#!/usr/bin/env python3
 import os
+import requests
 import shutil
+from utils import FAILED_IMAGES_DIR, FAILED_VIDEOS_DIR, FAILED_AUDIOS_DIR
 
-API_UPLOAD_URL = "https://centrix.co.in/v_api/upload"
-API_KEY = "DDjgMfxLqhxbNmaBoTkfBJkhMxNxkPwMgGjPUwCOaJRCBrvtUX"
 DEVICE_ID = "raspberry_pi_01"
+UPLOAD_URL = "https://centrix.co.in/v_api/upload"
+HEADERS = {"X-API-KEY": "DDjgMfxLqhxbNmaBoTkfBJkhMxNxkPwMgGjPUwCOaJRCBrvtUX"}
 
-def upload_file(file_path, start_time, end_time):
-    """
-    Uploads the given file to the remote API along with start_time and end_time.
-    If the upload is successful, the file is deleted.
-    If the upload fails, the file is moved to the failed_to_upload folder.
-    """
+def handle_failed_upload(file_path, file_type):
     if not os.path.exists(file_path):
-        print("File does not exist:", file_path)
-        return None
-
-    # Determine the form-data field name based on file extension.
-    # (The API sample shows the key "video" even for videos.
-    # You may adjust this logic if the API requires different keys.)
-    ext = os.path.splitext(file_path)[1].lower()
-    if ext in [".avi", ".wav", ".jpg", ".jpeg", ".png"]:
-        file_field = "video"
+        print(f"File {file_path} does not exist, cannot move.")
+        return
+    if file_type == "image":
+        target_dir = FAILED_IMAGES_DIR
+    elif file_type == "audio":
+        target_dir = FAILED_AUDIOS_DIR
+    elif file_type == "video":
+        target_dir = FAILED_VIDEOS_DIR
     else:
-        file_field = "video"
-
-    files = {file_field: open(file_path, "rb")}
-    data = {
-        "device_id": DEVICE_ID,
-        "start_time": start_time,
-        "end_time": end_time
-    }
-    headers = {
-        "X-API-KEY": API_KEY
-    }
-
+        return
+    os.makedirs(target_dir, exist_ok=True)
     try:
-        response = requests.post(API_UPLOAD_URL, files=files, data=data, headers=headers)
-        if response.status_code == 200:
-            res_json = response.json()
-            if res_json.get("success"):
-                os.remove(file_path)
-                print("Uploaded and deleted file:", file_path)
-                return res_json
-            else:
-                move_to_failed(file_path)
-                print("Upload failed, API response:", response.text)
-                return None
-        else:
-            move_to_failed(file_path)
-            print("Upload failed, status code:", response.status_code, response.text)
-            return None
+        shutil.move(file_path, os.path.join(target_dir, os.path.basename(file_path)))
+        print(f"Moved failed upload to {target_dir}")
     except Exception as e:
-        move_to_failed(file_path)
-        print("Exception during file upload:", e)
-        return None
-    finally:
-        files[file_field].close()
+        print(f"Failed to move file {file_path}: {e}")
 
-def move_to_failed(file_path):
-    failed_dir = os.path.join(os.path.dirname(file_path), "failed_to_upload")
-    if not os.path.exists(failed_dir):
-        os.makedirs(failed_dir)
-    base_name = os.path.basename(file_path)
-    dest = os.path.join(failed_dir, base_name)
-    shutil.move(file_path, dest)
-    print("Moved file to failed_to_upload:", dest)
+
+def upload_file(file_path, file_type, start_time="", end_time=""):
+    try:
+        with open(file_path, "rb") as f:
+            files = {file_type: f} 
+            data = {
+                "device_id": DEVICE_ID,
+                "file_type": file_type,
+                "start_time": start_time,
+                "end_time": end_time
+            }
+            resp = requests.post(UPLOAD_URL, headers=HEADERS, files=files, data=data)
+        if resp.status_code == 200:
+            result = resp.json()
+            if result.get("success"):
+                return True, result
+            else:
+                handle_failed_upload(file_path, file_type)
+                return False, result
+        else:
+            handle_failed_upload(file_path, file_type)
+            return False, {"error": resp.text}
+    except Exception as e:
+        handle_failed_upload(file_path, file_type)
+        return False, {"exception": str(e)}
+
+def upload_image(file_path):
+    return upload_file(file_path, "video")
+
+def upload_video(file_path, start_time="", end_time=""):
+    return upload_file(file_path, "video", start_time, end_time)
+
+def upload_audio(file_path, start_time="", end_time=""):
+    return upload_file(file_path, "video", start_time, end_time)
