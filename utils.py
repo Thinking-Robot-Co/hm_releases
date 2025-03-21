@@ -21,7 +21,7 @@ os.makedirs(FAILED_IMAGES_DIR, exist_ok=True)
 os.makedirs(FAILED_VIDEOS_DIR, exist_ok=True)
 os.makedirs(FAILED_AUDIOS_DIR, exist_ok=True)
 
-def format_timestamp(   ):
+def format_timestamp():
     return datetime.datetime.now().strftime("%d%b%y_%H%M%S").lower()
 
 def get_image_filename(device_id="helmet", prefix="img"):

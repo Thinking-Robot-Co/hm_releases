@@ -27,11 +27,10 @@ def handle_failed_upload(file_path, file_type):
     except Exception as e:
         print(f"Failed to move file {file_path}: {e}")
 
-
 def upload_file(file_path, file_type, start_time="", end_time=""):
     try:
         with open(file_path, "rb") as f:
-            files = {file_type: f} 
+            files = {file_type: f}
             data = {
                 "device_id": DEVICE_ID,
                 "file_type": file_type,

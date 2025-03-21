@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#this is Recorder.py
 import pyaudio
 import wave
 import threading
@@ -7,11 +6,13 @@ import datetime
 import os
 import time
 import subprocess
+
 # Audio settings
 CHUNK = 1024
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 44100
+
 class AudioRecorder:
     def __init__(self):
         os.makedirs("Audios", exist_ok=True)
@@ -25,6 +26,7 @@ class AudioRecorder:
         self.segment_stop_event = None
         self.segment_temp_file = None
         self.segment_start_time = None
+
     def start_recording(self):
         if self.audio_thread is not None and self.audio_thread.is_alive():
             return
@@ -32,6 +34,7 @@ class AudioRecorder:
         self.recording_start_time = datetime.datetime.now()
         self.audio_thread = threading.Thread(target=self.record_audio, daemon=True)
         self.audio_thread.start()
+
     def record_audio(self):
         p = pyaudio.PyAudio()
         stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE,
@@ -53,7 +56,8 @@ class AudioRecorder:
         wf.setframerate(RATE)
         wf.writeframes(b''.join(frames))
         wf.close()
-    def stop_recording(self):
+
+    def stop_recording(self, media_category):
         if self.stop_event:
             self.stop_event.set()
         if self.audio_thread:
@@ -61,14 +65,17 @@ class AudioRecorder:
         start = self.recording_start_time.strftime("%d%b%Y_%H%M%S").lower()
         end_time = datetime.datetime.now()
         end = end_time.strftime("%d%b%Y_%H%M%S").lower()
-        final_filename = os.path.join("Audios", f"audio_{self.audio_counter}_{start}_to_{end}.wav")
+        start_hms = self.recording_start_time.strftime("%H:%M:%S")
+        end_hms = end_time.strftime("%H:%M:%S")
+        final_filename = os.path.join("Audios", f"audio_{self.audio_counter}_{start}_to_{end}_{media_category}.wav")
         try:
             os.rename(self.temp_audio_file, final_filename)
         except Exception as e:
             print("Error renaming audio file:", e)
             final_filename = self.temp_audio_file
         self.audio_counter += 1
-        return final_filename
+        return final_filename, start_hms, end_hms
+
     # Methods for segmented audio recording:
     def start_segmented_recording(self):
         self.segment_stop_event = threading.Event()
@@ -76,6 +83,7 @@ class AudioRecorder:
         self.segment_temp_file = os.path.join("Audios", "temp_seg_audio.wav")
         self.segment_audio_thread = threading.Thread(target=self.record_segment_audio, daemon=True)
         self.segment_audio_thread.start()
+
     def record_segment_audio(self):
         p = pyaudio.PyAudio()
         stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE,
@@ -97,6 +105,7 @@ class AudioRecorder:
         wf.setframerate(RATE)
         wf.writeframes(b''.join(frames))
         wf.close()
+
     def stop_segmented_recording(self):
         if self.segment_stop_event:
             self.segment_stop_event.set()
@@ -112,6 +121,7 @@ class AudioRecorder:
             print("Error renaming segmented audio file:", e)
             final_filename = self.segment_temp_file
         return final_filename
+
 class VideoRecorder:
     def __init__(self, camera, audio_recorder=None):
         """
@@ -123,19 +133,22 @@ class VideoRecorder:
         self.recording = False
         self.segment_threshold = 10 * 1024 * 1024  # 10 MB
         self.current_video_file = None
-        self.segments = []
+        self.segments = []  # list of dicts with file and time info
         self.monitor_thread = None
         self.stop_monitor = False
         self.with_audio = False
         self.session_counter = 1  # Increases per session.
-        self.chunk_num = 1        # For now, always 1 (to be increased later).
+        self.chunk_num = 1        # For segmented recording.
         self.video_start_time = None
         self.segmentation_thread = None
+        self.current_segment_start = None
+
     def generate_video_filename(self):
         now = datetime.datetime.now()
         date_str = now.strftime("%d%b%Y").lower()
         time_str = now.strftime("%H%M%S")
         return os.path.join("Videos", f"temp_vdo_{date_str}_{time_str}.mp4")
+
     def start_recording(self, with_audio=False):
         if self.recording:
             return
@@ -144,98 +157,80 @@ class VideoRecorder:
         self.segments = []
         os.makedirs("Videos", exist_ok=True)
         if self.with_audio and self.audio_recorder is not None:
-            # Start the segmentation loop for merged video+audio.
             self.segmentation_thread = threading.Thread(target=self._record_with_segmentation, daemon=True)
             self.segmentation_thread.start()
         else:
-            # Non-audio mode: use the standard segmentation monitoring.
-            self.video_start_time = datetime.datetime.now()
+            self.current_segment_start = datetime.datetime.now()
             self.current_video_file = self.generate_video_filename()
             self.camera.apply_video_transform(hflip=True, vflip=False, rotation=90)
             self.camera.picam2.start_and_record_video(self.current_video_file)
-            self.segments.append(self.current_video_file)
             self.stop_monitor = False
             self.monitor_thread = threading.Thread(target=self.monitor_video_size, daemon=True)
             self.monitor_thread.start()
+
     def monitor_video_size(self):
         while self.recording and not self.stop_monitor:
             if os.path.exists(self.current_video_file):
                 size = os.path.getsize(self.current_video_file)
                 if size >= self.segment_threshold:
+                    segment_end = datetime.datetime.now()
                     try:
                         self.camera.picam2.stop_recording()
                     except Exception as e:
                         print("Error stopping recording for segmentation:", e)
+                    segment_record = {
+                        "file": self.current_video_file,
+                        "start": self.current_segment_start.strftime("%H:%M:%S"),
+                        "end": segment_end.strftime("%H:%M:%S"),
+                        "start_str": self.current_segment_start.strftime("%d%b%Y_%H%M%S").lower(),
+                        "end_str": segment_end.strftime("%d%b%Y_%H%M%S").lower()
+                    }
+                    self.segments.append(segment_record)
                     self.current_video_file = self.generate_video_filename()
+                    self.current_segment_start = datetime.datetime.now()
                     self.camera.picam2.start_and_record_video(self.current_video_file)
-                    self.segments.append(self.current_video_file)
             time.sleep(1)
+
     def _record_with_segmentation(self):
         while self.recording:
-            self.video_start_time = datetime.datetime.now()
+            seg_start = datetime.datetime.now()
             video_file = self.generate_video_filename()
-            # Start video segment.
             self.camera.picam2.start_and_record_video(video_file)
-            # Start corresponding audio segment.
             self.audio_recorder.start_segmented_recording()
-            # Monitor video file size.
             while self.recording:
                 if os.path.exists(video_file) and os.path.getsize(video_file) >= self.segment_threshold:
                     break
                 time.sleep(1)
-            # Stop the current segment
             self.camera.picam2.stop_recording()
+            seg_end = datetime.datetime.now()
             audio_file = self.audio_recorder.stop_segmented_recording()
-            # Merge video and audio
-            merged_file = self.merge_video_audio(video_file, audio_file)
+            merged_file = self.merge_video_audio(video_file, audio_file, seg_start, seg_end, None)
             if merged_file:
-                self.segments.append(merged_file)
+                segment_record = {
+                    "file": merged_file,
+                    "start": seg_start.strftime("%H:%M:%S"),
+                    "end": seg_end.strftime("%H:%M:%S"),
+                    "start_str": seg_start.strftime("%d%b%Y_%H%M%S").lower(),
+                    "end_str": seg_end.strftime("%d%b%Y_%H%M%S").lower()
+                }
+                self.segments.append(segment_record)
             else:
-                self.segments.append(video_file)
-            # Increment the chunk number correctly
+                segment_record = {
+                    "file": video_file,
+                    "start": seg_start.strftime("%H:%M:%S"),
+                    "end": seg_end.strftime("%H:%M:%S"),
+                    "start_str": seg_start.strftime("%d%b%Y_%H%M%S").lower(),
+                    "end_str": seg_end.strftime("%d%b%Y_%H%M%S").lower()
+                }
+                self.segments.append(segment_record)
             self.chunk_num += 1
-    def stop_recording(self):
-        if not self.recording:
-            return self.segments, "", ""
-        self.recording = False
-        if self.with_audio and self.segmentation_thread is not None:
-            self.segmentation_thread.join()
-        else:
-            self.stop_monitor = True
-            try:
-                self.camera.picam2.stop_recording()
-            except Exception as e:
-                print("Error stopping video recording:", e)
-            if self.monitor_thread:
-                self.monitor_thread.join()
-        # Resume preview so image capture remains available.
-        self.camera.picam2.start()
-        video_end_time = datetime.datetime.now()
-		# Format times in HH:MM:SS
-        start_str = self.video_start_time.strftime("%d%b%Y_%H%M%S").lower()
-        end_str = video_end_time.strftime("%d%b%Y_%H%M%S").lower()
-        start_time_hms = self.video_start_time.strftime("%H:%M:%S")
-        end_time_hms = video_end_time.strftime("%H:%M:%S")
-        final_segments = []
-        # Use index-based naming for each segment
-        for idx, seg in enumerate(self.segments, start=1):
-            prefix = "merged" if self.with_audio else "vdo"
-            final_name = os.path.join("Videos", 
-                f"{prefix}_{self.session_counter}_{idx}_{start_str}_to_{end_str}.mp4")
-            try:
-                os.rename(seg, final_name)
-            except Exception as e:
-                print("Error renaming video file:", e)
-                final_name = seg
-            final_segments.append(final_name)
-        self.session_counter += 1
-        self.chunk_num = 1  # Reset chunk number for new session if needed.
-        return final_segments, start_time_hms, end_time_hms
-    def merge_video_audio(self, video_file, audio_file):
-        video_start_str = self.video_start_time.strftime("%d%b%Y_%H%M%S").lower()
-        video_end_str = datetime.datetime.now().strftime("%d%b%Y_%H%M%S").lower()
+
+    def merge_video_audio(self, video_file, audio_file, seg_start, seg_end, media_category):
+        seg_start_str = seg_start.strftime("%d%b%Y_%H%M%S").lower()
+        seg_end_str = seg_end.strftime("%d%b%Y_%H%M%S").lower()
+        category_str = media_category if media_category else ""
         merged_file = os.path.join("Videos",
-            f"merged_{self.session_counter}_{self.chunk_num}_{video_start_str}_to_{video_end_str}.mp4")
+            f"merged_{self.session_counter}_{self.chunk_num}_{seg_start_str}_to_{seg_end_str}_{category_str}.mp4")
         cmd = [
             "ffmpeg",
             "-y",
@@ -253,3 +248,44 @@ class VideoRecorder:
         except subprocess.CalledProcessError as e:
             print("Error during merging:", e)
             return None
+
+    def stop_recording(self, media_category):
+        self.recording = False
+        if self.with_audio and self.segmentation_thread is not None:
+            self.segmentation_thread.join()
+        else:
+            self.stop_monitor = True
+            try:
+                self.camera.picam2.stop_recording()
+            except Exception as e:
+                print("Error stopping video recording:", e)
+            if self.monitor_thread:
+                self.monitor_thread.join()
+            if self.current_video_file:
+                seg_end = datetime.datetime.now()
+                try:
+                    self.camera.picam2.stop_recording()
+                except Exception as e:
+                    print("Error stopping video recording on final segment:", e)
+                segment_record = {
+                    "file": self.current_video_file,
+                    "start": self.current_segment_start.strftime("%H:%M:%S"),
+                    "end": seg_end.strftime("%H:%M:%S"),
+                    "start_str": self.current_segment_start.strftime("%d%b%Y_%H%M%S").lower(),
+                    "end_str": seg_end.strftime("%d%b%Y_%H%M%S").lower()
+                }
+                self.segments.append(segment_record)
+        final_segments = []
+        for idx, seg in enumerate(self.segments, start=1):
+            prefix = "merged" if self.with_audio else "vdo"
+            final_name = os.path.join("Videos", 
+                f"{prefix}_{self.session_counter}_{idx}_{seg['start_str']}_to_{seg['end_str']}_{media_category}.mp4")
+            try:
+                os.rename(seg["file"], final_name)
+            except Exception as e:
+                print("Error renaming video file:", e)
+                final_name = seg["file"]
+            final_segments.append({"file": final_name, "start": seg["start"], "end": seg["end"]})
+        self.session_counter += 1
+        self.chunk_num = 1
+        return final_segments

@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 
-### THIS IS SOMETHING NEW ###
 import sys
 import threading
 import os
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QCheckBox
+    QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QCheckBox, QComboBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from camera import Camera
 from recorder import AudioRecorder, VideoRecorder
 from uploader import upload_image, upload_audio, upload_video
 from gpio_handler import GPIOHandler
-# Import the failed-to-upload directory constants from utils.py
 from utils import FAILED_IMAGES_DIR, FAILED_VIDEOS_DIR, FAILED_AUDIOS_DIR
 
 class MainWindow(QMainWindow):
@@ -32,7 +30,6 @@ class MainWindow(QMainWindow):
 
         # Initialize recorders.
         self.audio_recorder = AudioRecorder()
-        # Pass audio_recorder into VideoRecorder for segmented merged recording.
         self.video_recorder = VideoRecorder(self.camera, self.audio_recorder)
         self.audio_recording = False
         self.video_recording = False
@@ -49,6 +46,13 @@ class MainWindow(QMainWindow):
         # Bottom controls.
         bottom_layout = QHBoxLayout()
         bottom_layout.setSpacing(10)
+
+        # Dropdown for media category.
+        self.type_dropdown = QComboBox()
+        categories = ["General", "Electrical", "Plumbing", "HVAC", "Patrician", 
+                      "Loose furniture", "Light fixtures", "Flooring", "Ceiling", "Painting"]
+        self.type_dropdown.addItems(categories)
+        bottom_layout.addWidget(self.type_dropdown)
 
         # Video toggle button.
         self.video_btn = QPushButton("Start Video")
@@ -95,29 +99,23 @@ class MainWindow(QMainWindow):
         self.attempt_reupload_failed_files()
 
     def attempt_reupload_failed_files(self):
-        # Define directories to scan for failed uploads.
         failed_dirs = {
             "image": FAILED_IMAGES_DIR,
             "audio": FAILED_AUDIOS_DIR,
             "video": FAILED_VIDEOS_DIR,
         }
-
-        # Iterate over file types and directories.
         for file_type, failed_dir in failed_dirs.items():
             if not os.path.exists(failed_dir):
                 continue
-
             for file_name in os.listdir(failed_dir):
                 file_path = os.path.join(failed_dir, file_name)
                 print(f"Attempting re-upload of {file_path}")
-
                 if file_type == "image":
                     success, resp = upload_image(file_path)
                 elif file_type == "audio":
-                    success, resp = upload_audio(file_path)
+                    success, resp = upload_audio(file_path, "", "")
                 elif file_type == "video":
-                    success, resp = upload_video(file_path)
-
+                    success, resp = upload_video(file_path, "", "")
                 if success:
                     os.remove(file_path)
                     print(f"Successfully re-uploaded and deleted {file_path}")
@@ -131,7 +129,8 @@ class MainWindow(QMainWindow):
     def capture_image_worker(self):
         msg = ""
         try:
-            image_path = self.camera.capture_image()
+            category = self.type_dropdown.currentText().lower()
+            image_path = self.camera.capture_image(category)
             success, resp = upload_image(image_path)
             if success:
                 os.remove(image_path)
@@ -155,10 +154,11 @@ class MainWindow(QMainWindow):
             self.audio_btn.setText("Stop Audio")
             self.status_label.setText("Audio recording started...")
         else:
-            audio_file = self.audio_recorder.stop_recording()
+            category = self.type_dropdown.currentText().lower()
+            audio_file, start_time, end_time = self.audio_recorder.stop_recording(category)
             self.audio_recording = False
             self.audio_btn.setText("Start Audio")
-            success, resp = upload_audio(audio_file, "", "")
+            success, resp = upload_audio(audio_file, start_time, end_time)
             if success:
                 os.remove(audio_file)
                 self.status_label.setText(f"Audio recorded & uploaded: {audio_file}")
@@ -167,38 +167,39 @@ class MainWindow(QMainWindow):
 
     def toggle_video_recording(self):
         record_audio_with_video = self.record_audio_checkbox.isChecked()
-        # Re-attempt to upload any failed files before starting a new session.
         self.attempt_reupload_failed_files()
-
+        category = self.type_dropdown.currentText().lower()
         if not self.video_recording:
             self.video_recorder.start_recording(with_audio=record_audio_with_video)
             self.video_recording = True
             self.video_btn.setText("Stop Video")
             self.status_label.setText("Video recording started...")
-        else:	
-            segments, start_time, end_time = self.video_recorder.stop_recording()
+        else:
+            segments = self.video_recorder.stop_recording(category)
             self.video_recording = False
             self.video_btn.setText("Start Video")
-            if record_audio_with_video:
-                if segments:
-                    msg = "Video segments merged & recorded: " + ", ".join(segments)
-                    for mf in segments:
-                        success, resp = upload_video(mf, start_time, end_time)
-                        if success:
-                            os.remove(mf)
-                    self.status_label.setText(msg)
-                else:
-                    self.status_label.setText("No video segments recorded.")
+            if segments:
+                msg_list = []
+                for seg in segments:
+                    seg_file = seg["file"]
+                    start_time = seg["start"]
+                    end_time = seg["end"]
+                    success, resp = upload_video(seg_file, start_time, end_time)
+                    if success:
+                        os.remove(seg_file)
+                        msg_list.append(seg_file)
+                    else:
+                        msg_list.append(f"{seg_file} (upload failed)")
+                self.status_label.setText("Video segments recorded: " + ", ".join(msg_list))
             else:
-                seg_info = ", ".join(segments)
-                self.status_label.setText(f"Video recorded. Segments: {seg_info}")
+                self.status_label.setText("No video segments recorded.")
 
     def close_session(self):
         self.camera.stop_preview()
         if self.audio_recording:
-            self.audio_recorder.stop_recording()
+            self.audio_recorder.stop_recording(self.type_dropdown.currentText().lower())
         if self.video_recording:
-            self.video_recorder.stop_recording()
+            self.video_recorder.stop_recording(self.type_dropdown.currentText().lower())
         self.gpio_handler.cleanup()
         QApplication.quit()
 
