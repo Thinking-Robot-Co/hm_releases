@@ -131,7 +131,7 @@ class VideoRecorder:
         self.camera = camera
         self.audio_recorder = audio_recorder
         self.recording = False
-        self.segment_threshold = 10 * 1024 * 1024  # 10 MB
+        self.segment_threshold = 50 * 1024 * 1024  # 10 MB
         self.current_video_file = None
         self.segments = []  # list of dicts with file and time info
         self.monitor_thread = None
