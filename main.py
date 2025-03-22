@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 import sys
 import threading
 import os
@@ -8,17 +9,11 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QCheckBox, QComboBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
-
-# Import your V2 modules
 from camera import Camera
 from recorder import AudioRecorder, VideoRecorder
 from uploader import upload_image, upload_audio, upload_video
 from gpio_handler import GPIOHandler
 from utils import FAILED_IMAGES_DIR, FAILED_VIDEOS_DIR, FAILED_AUDIOS_DIR
-
-# Import the Flask server module (V1 interface)
-import server
-from image_capturer import ImageCapturer  # For live web stream
 
 class MainWindow(QMainWindow):
     imageCaptured = pyqtSignal(str)
@@ -30,7 +25,7 @@ class MainWindow(QMainWindow):
 
         self.imageCaptured.connect(self.finish_capture)
 
-        # Initialize camera for GUI preview.
+        # Initialize camera.
         self.camera = Camera()
         self.preview_widget = self.camera.start_preview()
 
@@ -211,28 +206,7 @@ class MainWindow(QMainWindow):
         self.gpio_handler.cleanup()
         QApplication.quit()
 
-def start_flask_server():
-    # Set up the Flask server globals from your V2 objects
-    # For live streaming, we create an ImageCapturer instance (separate from the GUI camera)
-    image_capturer = ImageCapturer()
-    image_capturer.start()
-    threading.Thread(target=image_capturer.capture_loop, daemon=True).start()
-    
-    # Assign the shared objects to the Flask server module.
-    server.image_capturer = image_capturer
-    server.video_recorder = window.video_recorder  # use the same recorder as the GUI
-    server.audio_only_recorder = window.audio_recorder  # use the same audio recorder
-
-    # Start the Flask server (blocking call) with reloader disabled.
-    server.app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
-
 if __name__ == "__main__":
-    # Start the Flask server in a separate daemon thread.
-    flask_thread = threading.Thread(target=start_flask_server, daemon=True)
-    flask_thread.start()
-    print("Flask server started on port 5000...")
-
-    # Start the GUI.
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
