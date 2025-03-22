@@ -39,16 +39,21 @@ class Camera:
             self.picam2.stop()
             self.preview_started = False
 
-    def capture_image(self, media_category):
+    def capture_image(self, media_category="general"):
         """
         Captures an image and saves it with the naming convention:
-        image_<num>_<date>_<time>_<media category>.jpg
-        where for images, start and end times are the same.
+        image_<num>_<date>_<time>_<media_category>.jpg
+        For images, the start and end times are identical.
         """
+        # Replace any spaces in the media_category to ensure a valid filename.
+        sanitized_category = media_category.replace(" ", "_").lower()
         now = datetime.datetime.now()
-        date_str = now.strftime("%d%b%Y").lower()
-        time_str = now.strftime("%H%M%S")
-        filename = os.path.join("Images", f"image_{self.image_counter}_{date_str}_{time_str}_{media_category}.jpg")
-        self.picam2.capture_file(filename)
+        date_str = now.strftime("%d%b%Y").lower()  # e.g., 12feb2021
+        time_str = now.strftime("%H%M%S")            # e.g., 112012
+        filename = os.path.join("Images", f"image_{self.image_counter}_{date_str}_{time_str}_{sanitized_category}.jpg")
+        try:
+            self.picam2.capture_file(filename)
+        except Exception as e:
+            raise Exception("Capture failed: " + str(e))
         self.image_counter += 1
         return filename

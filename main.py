@@ -3,6 +3,7 @@
 import sys
 import threading
 import os
+import datetime
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QCheckBox, QComboBox
@@ -111,7 +112,7 @@ class MainWindow(QMainWindow):
                 file_path = os.path.join(failed_dir, file_name)
                 print(f"Attempting re-upload of {file_path}")
                 if file_type == "image":
-                    success, resp = upload_image(file_path)
+                    success, resp = upload_image(file_path, "", "")
                 elif file_type == "audio":
                     success, resp = upload_audio(file_path, "", "")
                 elif file_type == "video":
@@ -130,8 +131,10 @@ class MainWindow(QMainWindow):
         msg = ""
         try:
             category = self.type_dropdown.currentText().lower()
+            # Record the capture time (using the same value for both start and end)
+            capture_time = datetime.datetime.now().strftime("%H:%M:%S")
             image_path = self.camera.capture_image(category)
-            success, resp = upload_image(image_path)
+            success, resp = upload_image(image_path, capture_time, capture_time)
             if success:
                 os.remove(image_path)
                 msg = f"Image captured & uploaded: {image_path}"

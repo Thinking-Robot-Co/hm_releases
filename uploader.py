@@ -52,8 +52,8 @@ def upload_file(file_path, file_type, start_time="", end_time=""):
         handle_failed_upload(file_path, file_type)
         return False, {"exception": str(e)}
 
-def upload_image(file_path):
-    return upload_file(file_path, "video")
+def upload_image(file_path, start_time="", end_time=""):
+    return upload_file(file_path, "video", start_time, end_time)
 
 def upload_video(file_path, start_time="", end_time=""):
     return upload_file(file_path, "video", start_time, end_time)
