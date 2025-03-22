@@ -50,7 +50,7 @@ class Camera:
         now = datetime.datetime.now()
         date_str = now.strftime("%d%b%Y").lower()  # e.g., 12feb2021
         time_str = now.strftime("%H%M%S")            # e.g., 112012
-        filename = os.path.join("Images", f"image_{self.image_counter}_{date_str}_{time_str}_{sanitized_category}.jpg")
+        filename = os.path.join("Images", f"img_{self.image_counter}_{date_str}_{time_str}_{sanitized_category}.jpg")
         try:
             self.picam2.capture_file(filename)
         except Exception as e:
