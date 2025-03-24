@@ -132,7 +132,7 @@ class VideoRecorder:
         self.audio_recorder = audio_recorder
         self.recording = False
         # Changed from 10 MB to 50 MB by default
-        self.segment_threshold = 1 * 1024 * 1024  
+        self.segment_threshold = 50 * 1024 * 1024  
         self.current_video_file = None
         # Will store a list of dicts with:
         # { "file": <path>, "start": <HH:MM:SS>, "end": <HH:MM:SS>, "start_str": <timestamp>, "end_str": <timestamp> }
