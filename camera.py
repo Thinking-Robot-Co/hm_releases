@@ -60,11 +60,14 @@ class Camera:
 
     def update_controls(self, controls):
         """
-        Update camera controls in real-time. 'controls' should be a dictionary with
-        keys corresponding to camera control parameters, such as 'Brightness', 'Sharpness', etc.
-        Example: {"Brightness": 60, "Sharpness": 45, "Contrast": 50, "Saturation": 50}
+        Update camera controls in real-time.
+        The slider values (0–100) are mapped to normalized values (0.0–1.0)
+        where 0.5 is the default (neutral) setting.
+        Example input: {"Brightness": 50, "Sharpness": 50, "Contrast": 50, "Saturation": 50}
         """
+        # Normalize the values: slider value 50 becomes 0.5
+        normalized_controls = {key: value / 100.0 for key, value in controls.items()}
         try:
-            self.picam2.set_controls(controls)
+            self.picam2.set_controls(normalized_controls)
         except Exception as e:
             print("Error updating camera controls:", e)

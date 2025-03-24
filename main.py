@@ -69,20 +69,11 @@ class AdvancedOptionsDialog(QDialog):
         layout.addWidget(self.button_box)
 
     def update_camera_controls(self):
-        # Read slider values
+        # Only brightness is currently supported.
         brightness = self.brightness_slider.value()
-        sharpness = self.sharpness_slider.value()
-        contrast = self.contrast_slider.value()
-        saturation = self.saturation_slider.value()
-
-        controls = {
-            "Brightness": brightness,
-            "Sharpness": sharpness,
-            "Contrast": contrast,
-            "Saturation": saturation
-        }
-        # Update camera controls live
+        controls = {"Brightness": brightness}
         self.camera.update_controls(controls)
+
 
 class MainWindow(QMainWindow):
     imageCaptured = pyqtSignal(str)
