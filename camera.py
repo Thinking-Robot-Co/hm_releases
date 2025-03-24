@@ -57,3 +57,14 @@ class Camera:
             raise Exception("Capture failed: " + str(e))
         self.image_counter += 1
         return filename
+
+    def update_controls(self, controls):
+        """
+        Update camera controls in real-time. 'controls' should be a dictionary with
+        keys corresponding to camera control parameters, such as 'Brightness', 'Sharpness', etc.
+        Example: {"Brightness": 60, "Sharpness": 45, "Contrast": 50, "Saturation": 50}
+        """
+        try:
+            self.picam2.set_controls(controls)
+        except Exception as e:
+            print("Error updating camera controls:", e)

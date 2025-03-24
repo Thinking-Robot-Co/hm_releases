@@ -6,7 +6,8 @@ import os
 import datetime
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QCheckBox, QComboBox
+    QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QCheckBox, QComboBox,
+    QDialog, QSlider, QDialogButtonBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from camera import Camera
@@ -14,6 +15,74 @@ from recorder import AudioRecorder, VideoRecorder
 from uploader import upload_image, upload_audio, upload_video
 from gpio_handler import GPIOHandler
 from utils import FAILED_IMAGES_DIR, FAILED_VIDEOS_DIR, FAILED_AUDIOS_DIR
+
+class AdvancedOptionsDialog(QDialog):
+    def __init__(self, camera, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Advanced Camera Settings")
+        self.camera = camera
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Brightness slider
+        self.brightness_label = QLabel("Brightness:")
+        self.brightness_slider = QSlider(Qt.Horizontal)
+        self.brightness_slider.setRange(0, 100)
+        self.brightness_slider.setValue(50)
+        self.brightness_slider.valueChanged.connect(self.update_camera_controls)
+        layout.addWidget(self.brightness_label)
+        layout.addWidget(self.brightness_slider)
+
+        # Sharpness slider
+        self.sharpness_label = QLabel("Sharpness:")
+        self.sharpness_slider = QSlider(Qt.Horizontal)
+        self.sharpness_slider.setRange(0, 100)
+        self.sharpness_slider.setValue(50)
+        self.sharpness_slider.valueChanged.connect(self.update_camera_controls)
+        layout.addWidget(self.sharpness_label)
+        layout.addWidget(self.sharpness_slider)
+
+        # Contrast slider
+        self.contrast_label = QLabel("Contrast:")
+        self.contrast_slider = QSlider(Qt.Horizontal)
+        self.contrast_slider.setRange(0, 100)
+        self.contrast_slider.setValue(50)
+        self.contrast_slider.valueChanged.connect(self.update_camera_controls)
+        layout.addWidget(self.contrast_label)
+        layout.addWidget(self.contrast_slider)
+
+        # Saturation slider
+        self.saturation_label = QLabel("Saturation:")
+        self.saturation_slider = QSlider(Qt.Horizontal)
+        self.saturation_slider.setRange(0, 100)
+        self.saturation_slider.setValue(50)
+        self.saturation_slider.valueChanged.connect(self.update_camera_controls)
+        layout.addWidget(self.saturation_label)
+        layout.addWidget(self.saturation_slider)
+
+        # Dialog buttons: OK and Cancel
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
+
+    def update_camera_controls(self):
+        # Read slider values
+        brightness = self.brightness_slider.value()
+        sharpness = self.sharpness_slider.value()
+        contrast = self.contrast_slider.value()
+        saturation = self.saturation_slider.value()
+
+        controls = {
+            "Brightness": brightness,
+            "Sharpness": sharpness,
+            "Contrast": contrast,
+            "Saturation": saturation
+        }
+        # Update camera controls live
+        self.camera.update_controls(controls)
 
 class MainWindow(QMainWindow):
     imageCaptured = pyqtSignal(str)
@@ -78,6 +147,12 @@ class MainWindow(QMainWindow):
         self.audio_btn.clicked.connect(self.toggle_audio_recording)
         bottom_layout.addWidget(self.audio_btn)
 
+        # Advanced Options button.
+        self.advanced_btn = QPushButton("Advanced Options")
+        self.advanced_btn.setFixedSize(150, 40)
+        self.advanced_btn.clicked.connect(self.open_advanced_options)
+        bottom_layout.addWidget(self.advanced_btn)
+
         bottom_layout.addStretch()
 
         # Close Session button.
@@ -98,6 +173,10 @@ class MainWindow(QMainWindow):
 
         # Attempt to re-upload any previously failed files on startup.
         self.attempt_reupload_failed_files()
+
+    def open_advanced_options(self):
+        dialog = AdvancedOptionsDialog(self.camera, self)
+        dialog.exec_()
 
     def attempt_reupload_failed_files(self):
         failed_dirs = {
