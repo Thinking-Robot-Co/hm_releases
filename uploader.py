@@ -3,8 +3,10 @@ import os
 import requests
 import shutil
 from utils import FAILED_IMAGES_DIR, FAILED_VIDEOS_DIR, FAILED_AUDIOS_DIR
+from utils import get_rpi_serial
 
-DEVICE_ID = "raspberry_pi_01"
+DEVICE_ID = get_rpi_serial()
+# DEVICE_ID = "raspberry_pi_01"
 UPLOAD_URL = "https://centrix.co.in/v_api/upload"
 HEADERS = {"X-API-KEY": "DDjgMfxLqhxbNmaBoTkfBJkhMxNxkPwMgGjPUwCOaJRCBrvtUX"}
 

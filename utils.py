@@ -33,3 +33,14 @@ def get_video_filename(device_id="helmet", session_no=1, seg_num=1, prefix="vdo"
     ts = datetime.datetime.now().strftime("%d%b%y_%H%M%S").lower()
     filename = os.path.join(VIDEOS_DIR, f"{prefix}_{device_id}_{session_no}_{seg_num}_{ts}.mp4")
     return filename
+
+def get_rpi_serial():
+    try:
+        with open('/proc/cpuinfo', 'r') as f:
+            for line in f:
+                if line.startswith('Serial'):
+                    return line.strip().split(":")[1].strip()
+    except Exception as e:
+        print("Could not read RPi serial number:", e)
+    return "unknown_pi"
+
