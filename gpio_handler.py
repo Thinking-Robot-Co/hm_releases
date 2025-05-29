@@ -18,7 +18,7 @@ class GPIOHandler:
         GPIO.setmode(GPIO.BCM)
         # Setup buttons as inputs with pull-up resistors.
         GPIO.setup(self.btn_video, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(self.btn_image, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.setup(self.btn_image, GPIO.IN)
         GPIO.setup(self.btn_audio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
         # Setup LEDs as outputs.
         GPIO.setup(self.led_video, GPIO.OUT)
