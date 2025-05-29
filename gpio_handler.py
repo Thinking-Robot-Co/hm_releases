@@ -48,7 +48,7 @@ class GPIOHandler:
             else:
                 video_pressed = False
 
-            if GPIO.input(self.btn_image) == GPIO.LOW:
+            if GPIO.input(self.btn_image) == GPIO.HIGH:
                 if not image_pressed:
                     image_pressed = True
                     # Trigger image capture.
