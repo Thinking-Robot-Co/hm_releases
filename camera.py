@@ -17,6 +17,27 @@ class Camera:
         # Apply transform ONCE at initialization
         self.transform = Transform(hflip=True, vflip=True)
 
+    def _stop_if_running(self):
+        try:
+            self.picam2.stop()
+        except Exception:
+            pass
+
+    def _configure_preview(self):
+        config = self.picam2.create_preview_configuration(
+            transform=self.transform,
+            sensor={'output_size': (1296, 972)}
+        )
+        self.picam2.configure(config)
+
+    def _configure_still(self):
+        still_config = self.picam2.create_still_configuration(transform=self.transform)
+        self.picam2.configure(still_config)
+
+    def _configure_video(self):
+        video_config = self.picam2.create_video_configuration(transform=self.transform)
+        self.picam2.configure(video_config)
+
     def start_preview(self):
         """
         Starts the preview with a 180-degree rotated image.
@@ -24,12 +45,9 @@ class Camera:
         if self.preview_started:
             return self.preview_widget
 
-        # Create preview configuration with transform
-        config = self.picam2.create_preview_configuration(
-            transform=self.transform,
-            sensor={'output_size': (1296, 972)}
-        )
-        self.picam2.configure(config)
+        # Ensure stop -> configure -> start ordering for preview
+        self._stop_if_running()
+        self._configure_preview()
 
         # Start preview widget
         self.preview_widget = QGlPicamera2(self.picam2, keep_ar=True)
@@ -49,13 +67,9 @@ class Camera:
         """
         Capture still image with rotation and restore preview afterwards.
         """
-        # Stop preview pipeline before reconfiguring
-        if self.preview_started:
-            self.picam2.stop()
-
-        # Create & apply rotated still configuration
-        still_config = self.picam2.create_still_configuration(transform=self.transform)
-        self.picam2.configure(still_config)
+        # Stop -> configure(still) -> start
+        self._stop_if_running()
+        self._configure_still()
         self.picam2.start()
 
         sanitized_category = media_category.replace(" ", "_").lower()
@@ -74,17 +88,31 @@ class Camera:
 
         self.image_counter += 1
 
-        # ✅ Restore rotated preview after capture
-        preview_config = self.picam2.create_preview_configuration(
-            transform=self.transform,
-            sensor={'output_size': (1296, 972)}
-        )
-        self.picam2.configure(preview_config)
+        # Restore rotated preview: stop -> configure(preview) -> start
+        self._stop_if_running()
+        self._configure_preview()
         self.picam2.start()
 
         self.preview_started = True
 
         return filename
+
+    def prepare_video_mode(self):
+        """
+        Ensure the pipeline is in video mode with rotation and running.
+        """
+        self._stop_if_running()
+        self._configure_video()
+        self.picam2.start()
+
+    def restore_preview(self):
+        """
+        Restore the preview mode after any capture/recording.
+        """
+        self._stop_if_running()
+        self._configure_preview()
+        self.picam2.start()
+        self.preview_started = True
 
     def update_controls(self, controls):
         """

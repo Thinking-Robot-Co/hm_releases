@@ -146,9 +146,6 @@ class VideoRecorder:
         return os.path.join("Videos", f"temp_vdo_{date_str}_{time_str}.mp4")
 
     def start_recording(self, with_audio=False):
-        from libcamera import Transform   # ✅ Import here
-        transform = Transform(hflip=True, vflip=True)  # ✅ 180° rotation
-
         if self.recording:
             return
         self.recording = True
@@ -158,9 +155,8 @@ class VideoRecorder:
 
         self.current_segment_start = datetime.datetime.now()
 
-        # ✅ Configure the camera for rotated video recording
-        video_config = self.camera.picam2.create_video_configuration(transform=transform)
-        self.camera.picam2.configure(video_config)
+        # Ensure camera is in video mode: stop -> configure(video) -> start
+        self.camera.prepare_video_mode()
 
         if self.with_audio and self.audio_recorder is not None:
             # Start segmented audio+video thread
@@ -207,10 +203,13 @@ class VideoRecorder:
         Segmentation loop for "with audio" scenario. Each chunk is recorded
         until the threshold is reached, then we merge that chunk's video/audio.
         """
+        # Ensure video mode is prepared before starting loop
+        self.camera.prepare_video_mode()
         seg_start = self.current_segment_start
         while self.recording:
             video_file = self.generate_video_filename()
-            self.camera.picam2.start_and_record_video(video_file)
+            # Start a new chunk
+            self.camera.picam2.start_recording(video_file)
             self.audio_recorder.start_segmented_recording()
 
             # Wait until threshold is hit or user stops recording
@@ -220,7 +219,10 @@ class VideoRecorder:
                 time.sleep(1)
 
             # Stop this chunk
-            self.camera.picam2.stop_recording()
+            try:
+                self.camera.picam2.stop_recording()
+            except Exception as e:
+                print("Error stopping recording in segmentation:", e)
             seg_end = datetime.datetime.now()
             audio_file = self.audio_recorder.stop_segmented_recording()
 
@@ -311,7 +313,7 @@ class VideoRecorder:
                 self.segments.append(segment_record)
 
         # Resume camera preview so image capture remains available
-        self.camera.picam2.start()
+        self.camera.restore_preview()
 
         # Rename final segments
         final_segments = []
