@@ -88,7 +88,6 @@ class MainWindow(QMainWindow):
         # Initialize camera.
         self.camera = Camera()
         self.preview_widget = self.camera.start_preview()
-        self.camera.set_controls({"Rotation": 180})
 
         # Initialize recorders.
         self.audio_recorder = AudioRecorder()
