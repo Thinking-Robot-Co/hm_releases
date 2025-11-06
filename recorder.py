@@ -121,21 +121,14 @@ class AudioRecorder:
             print("Error renaming segmented audio file:", e)
             final_filename = self.segment_temp_file
         return final_filename
-
+        
 class VideoRecorder:
     def __init__(self, camera, audio_recorder=None):
-        """
-        camera: an instance of Camera from camera.py.
-        audio_recorder: an instance of AudioRecorder for merged recording.
-        """
         self.camera = camera
         self.audio_recorder = audio_recorder
         self.recording = False
-        # Changed from 10 MB to 50 MB by default
-        self.segment_threshold = 50 * 1024 * 1024  
+        self.segment_threshold = 50 * 1024 * 1024
         self.current_video_file = None
-        # Will store a list of dicts with:
-        # { "file": <path>, "start": <HH:MM:SS>, "end": <HH:MM:SS>, "start_str": <timestamp>, "end_str": <timestamp> }
         self.segments = []
         self.monitor_thread = None
         self.stop_monitor = False
@@ -153,6 +146,9 @@ class VideoRecorder:
         return os.path.join("Videos", f"temp_vdo_{date_str}_{time_str}.mp4")
 
     def start_recording(self, with_audio=False):
+        from libcamera import Transform   # ✅ Import here
+        transform = Transform(hflip=True, vflip=True)  # ✅ 180° rotation
+
         if self.recording:
             return
         self.recording = True
@@ -160,30 +156,25 @@ class VideoRecorder:
         self.segments.clear()
         os.makedirs("Videos", exist_ok=True)
 
-        # For the very first segment of this session:
         self.current_segment_start = datetime.datetime.now()
 
+        # ✅ Configure the camera for rotated video recording
+        video_config = self.camera.picam2.create_video_configuration(transform=transform)
+        self.camera.picam2.configure(video_config)
+
         if self.with_audio and self.audio_recorder is not None:
-            # Start audio+video segmentation in a separate thread.
-            self.segmentation_thread = threading.Thread(
-                target=self._record_with_segmentation, daemon=True
-            )
+            # Start segmented audio+video thread
+            self.segmentation_thread = threading.Thread(target=self._record_with_segmentation, daemon=True)
             self.segmentation_thread.start()
         else:
-            # Non-audio mode: standard segmentation approach
             self.current_video_file = self.generate_video_filename()
-            self.camera.apply_video_transform(hflip=True, vflip=False, rotation=90)
-            self.camera.picam2.start_and_record_video(self.current_video_file)
+            self.camera.picam2.start_recording(self.current_video_file)
 
             self.stop_monitor = False
             self.monitor_thread = threading.Thread(target=self.monitor_video_size, daemon=True)
             self.monitor_thread.start()
 
     def monitor_video_size(self):
-        """
-        Checks the size of the current video file in a loop. If it exceeds
-        the threshold, we close out the current chunk and start a new one.
-        """
         while self.recording and not self.stop_monitor:
             if os.path.exists(self.current_video_file):
                 size = os.path.getsize(self.current_video_file)
@@ -194,7 +185,6 @@ class VideoRecorder:
                     except Exception as e:
                         print("Error stopping recording for segmentation:", e)
 
-                    # Save the segment's timing info
                     segment_record = {
                         "file": self.current_video_file,
                         "start": self.current_segment_start.strftime("%H:%M:%S"),
@@ -204,13 +194,14 @@ class VideoRecorder:
                     }
                     self.segments.append(segment_record)
 
-                    # Prepare for the next segment
                     self.current_segment_start = segment_end
                     self.current_video_file = self.generate_video_filename()
-                    self.camera.picam2.start_and_record_video(self.current_video_file)
+                    self.camera.picam2.start_recording(self.current_video_file)
 
             time.sleep(1)
 
+    # (your _record_with_segmentation(), merge_video_audio(), stop_recording() stay EXACTLY the same)
+    
     def _record_with_segmentation(self):
         """
         Segmentation loop for "with audio" scenario. Each chunk is recorded
