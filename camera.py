@@ -45,14 +45,17 @@ class Camera:
             self.picam2.stop()
             self.preview_started = False
 
-    def capture_image(self, media_category="general"):
-        """
-        Captures a rotated still image.
-        Saves as: img_<count>_<date>_<time>_<category>.jpg
-        """
-        # Apply rotated still config
+     def capture_image(self, media_category="general"):
+        from libcamera import Transform
+
+        # Stop preview pipeline before reconfiguring
+        if self.preview_started:
+            self.picam2.stop()
+
+        # Create & apply rotated still configuration
         still_config = self.picam2.create_still_configuration(transform=self.transform)
         self.picam2.configure(still_config)
+        self.picam2.start()
 
         sanitized_category = media_category.replace(" ", "_").lower()
         now = datetime.datetime.now()
@@ -64,14 +67,24 @@ class Camera:
         )
 
         try:
-            self.picam2.start()
             self.picam2.capture_file(filename)
         except Exception as e:
             raise Exception("Capture failed: " + str(e))
-
+    
         self.image_counter += 1
-        return filename
 
+        # ✅ Restore rotated preview after capture
+        preview_config = self.picam2.create_preview_configuration(
+            transform=self.transform,
+            sensor={'output_size': (1296, 972)}
+        )
+        self.picam2.configure(preview_config)
+        self.picam2.start()
+    
+        self.preview_started = True
+
+        return filename
+         
     def update_controls(self, controls):
         """
         Update camera controls in real-time.
