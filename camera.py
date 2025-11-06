@@ -12,7 +12,7 @@ class Camera:
         self.image_counter = 1
         os.makedirs("Images", exist_ok=True)
 
-    def apply_video_transform(self, hflip=False, vflip=False, rotation=0, width=None, height=None):
+    def apply_video_transform(self, hflip=True, vflip=True, rotation=0, width=None, height=None):
         """
         Apply transformation settings for video (and preview).
         Optionally adjust output dimensions.
