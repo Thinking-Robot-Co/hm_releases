@@ -6,6 +6,8 @@ import datetime
 import os
 import time
 import subprocess
+from picamera2.encoders import H264Encoder
+from picamera2.outputs import FfmpegOutput
 
 # Audio settings
 CHUNK = 1024
@@ -164,7 +166,9 @@ class VideoRecorder:
             self.segmentation_thread.start()
         else:
             self.current_video_file = self.generate_video_filename()
-            self.camera.picam2.start_recording(self.current_video_file)
+            encoder = H264Encoder()
+            output = FfmpegOutput(self.current_video_file)
+            self.camera.picam2.start_recording(encoder, output)
 
             self.stop_monitor = False
             self.monitor_thread = threading.Thread(target=self.monitor_video_size, daemon=True)
@@ -192,7 +196,9 @@ class VideoRecorder:
 
                     self.current_segment_start = segment_end
                     self.current_video_file = self.generate_video_filename()
-                    self.camera.picam2.start_recording(self.current_video_file)
+                    encoder = H264Encoder()
+                    output = FfmpegOutput(self.current_video_file)
+                    self.camera.picam2.start_recording(encoder, output)
 
             time.sleep(1)
 
@@ -209,7 +215,9 @@ class VideoRecorder:
         while self.recording:
             video_file = self.generate_video_filename()
             # Start a new chunk
-            self.camera.picam2.start_recording(video_file)
+            encoder = H264Encoder()
+            output = FfmpegOutput(video_file)
+            self.camera.picam2.start_recording(encoder, output)
             self.audio_recorder.start_segmented_recording()
 
             # Wait until threshold is hit or user stops recording
