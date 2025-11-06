@@ -3,6 +3,8 @@ import os
 import datetime
 from picamera2 import Picamera2
 from picamera2.previews.qt import QGlPicamera2
+from libcamera import Transform
+
 
 class Camera:
     def __init__(self):
@@ -12,60 +14,69 @@ class Camera:
         self.image_counter = 1
         os.makedirs("Images", exist_ok=True)
 
-    def apply_video_transform(self, hflip=False, vflip=False, rotation=180, width=None, height=None):
-        """
-        Apply transformation settings for video (and preview).
-        Optionally adjust output dimensions.
-        """
-        config = self.picam2.create_preview_configuration()
-        config["transform"] = {"hflip": hflip, "vflip": vflip, "rotation": rotation}
-        if width is not None and height is not None:
-            config["size"] = (width, height)
-        self.picam2.configure(config)
+        # Apply transform ONCE at initialization
+        self.transform = Transform(hflip=True, vflip=True)
 
     def start_preview(self):
+        """
+        Starts the preview with a 180-degree rotated image.
+        """
         if self.preview_started:
             return self.preview_widget
 
-        self.preview_widget = QGlPicamera2(self.picam2, keep_ar=True)
-        config = self.picam2.create_preview_configuration(sensor={'output_size': (1296, 972)})
+        # Create preview configuration with transform
+        config = self.picam2.create_preview_configuration(
+            transform=self.transform,
+            sensor={'output_size': (1296, 972)}
+        )
         self.picam2.configure(config)
+
+        # Start preview widget
+        self.preview_widget = QGlPicamera2(self.picam2, keep_ar=True)
         self.picam2.start()
         self.preview_started = True
         return self.preview_widget
-		
+
     def stop_preview(self):
+        """
+        Stops live preview.
+        """
         if self.preview_started:
             self.picam2.stop()
             self.preview_started = False
 
     def capture_image(self, media_category="general"):
         """
-        Captures an image and saves it with the naming convention:
-        image_<num>_<date>_<time>_<media_category>.jpg
-        For images, the start and end times are identical.
+        Captures a rotated still image.
+        Saves as: img_<count>_<date>_<time>_<category>.jpg
         """
-        # Replace any spaces in the media_category to ensure a valid filename.
+        # Apply rotated still config
+        still_config = self.picam2.create_still_configuration(transform=self.transform)
+        self.picam2.configure(still_config)
+
         sanitized_category = media_category.replace(" ", "_").lower()
         now = datetime.datetime.now()
-        date_str = now.strftime("%d%b%Y").lower()  # e.g., 12feb2021
-        time_str = now.strftime("%H%M%S")            # e.g., 112012
-        filename = os.path.join("Images", f"img_{self.image_counter}_{date_str}_{time_str}_{sanitized_category}.jpg")
+        date_str = now.strftime("%d%b%Y").lower()
+        time_str = now.strftime("%H%M%S")
+        filename = os.path.join(
+            "Images",
+            f"img_{self.image_counter}_{date_str}_{time_str}_{sanitized_category}.jpg"
+        )
+
         try:
+            self.picam2.start()
             self.picam2.capture_file(filename)
         except Exception as e:
             raise Exception("Capture failed: " + str(e))
+
         self.image_counter += 1
         return filename
 
     def update_controls(self, controls):
         """
         Update camera controls in real-time.
-        The slider values (0–100) are mapped to normalized values (0.0–1.0)
-        where 0.5 is the default (neutral) setting.
-        Example input: {"Brightness": 50, "Sharpness": 50, "Contrast": 50, "Saturation": 50}
+        Maps slider values (0–100) → (0.0–1.0).
         """
-        # Normalize the values: slider value 50 becomes 0.5
         normalized_controls = {key: value / 100.0 for key, value in controls.items()}
         try:
             self.picam2.set_controls(normalized_controls)
