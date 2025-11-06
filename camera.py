@@ -45,9 +45,10 @@ class Camera:
             self.picam2.stop()
             self.preview_started = False
 
-     def capture_image(self, media_category="general"):
-        from libcamera import Transform
-
+    def capture_image(self, media_category="general"):
+        """
+        Capture still image with rotation and restore preview afterwards.
+        """
         # Stop preview pipeline before reconfiguring
         if self.preview_started:
             self.picam2.stop()
@@ -70,7 +71,7 @@ class Camera:
             self.picam2.capture_file(filename)
         except Exception as e:
             raise Exception("Capture failed: " + str(e))
-    
+
         self.image_counter += 1
 
         # ✅ Restore rotated preview after capture
@@ -80,11 +81,11 @@ class Camera:
         )
         self.picam2.configure(preview_config)
         self.picam2.start()
-    
+
         self.preview_started = True
 
         return filename
-         
+
     def update_controls(self, controls):
         """
         Update camera controls in real-time.
