@@ -26,7 +26,7 @@ class Camera:
     def _configure_preview(self):
         config = self.picam2.create_preview_configuration(
             transform=self.transform,
-            sensor={'output_size': (1296, 972)}
+            main={"size": (1280, 960)}  # 4:3 to avoid FOV crop
         )
         self.picam2.configure(config)
 
@@ -35,7 +35,10 @@ class Camera:
         self.picam2.configure(still_config)
 
     def _configure_video(self):
-        video_config = self.picam2.create_video_configuration(transform=self.transform)
+        video_config = self.picam2.create_video_configuration(
+            transform=self.transform,
+            main={"size": (1280, 960)}  # 4:3 to match preview FOV
+        )
         self.picam2.configure(video_config)
 
     def start_preview(self):
