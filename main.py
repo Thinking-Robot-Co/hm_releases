@@ -87,13 +87,8 @@ class MainWindow(QMainWindow):
 
         # Initialize camera.
         self.camera = Camera()
-
-        # Apply rotation before starting preview
-        self.camera.apply_video_transform(rotation=180)
-
-        # Start preview
         self.preview_widget = self.camera.start_preview()
-
+        self.camera.set_controls({"Rotation": 180})
 
         # Initialize recorders.
         self.audio_recorder = AudioRecorder()
