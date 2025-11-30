@@ -15,7 +15,7 @@ class Camera:
         os.makedirs("Images", exist_ok=True)
 
         # Apply transform ONCE at initialization
-        self.transform = Transform(hflip=True, vflip=True)
+        self.transform = Transform(hflip=True, vflip=False)
 
     def _stop_if_running(self):
         try:
