@@ -41,9 +41,9 @@ class Camera:
         )
         self.picam2.configure(video_config)
 
-    def start_preview(self):
+def start_preview(self):
         """
-        Starts the preview with a 180-degree rotated image.
+        Starts the preview and forces control orientation.
         """
         if self.preview_started:
             return self.preview_widget
@@ -55,6 +55,17 @@ class Camera:
         # Start preview widget
         self.preview_widget = QGlPicamera2(self.picam2, keep_ar=True)
         self.picam2.start()
+        
+        # --- FORCE CONTROLS HERE ---
+        # 0 = No Flip, 1 = Flip
+        # Try changing these to 1 if 0 doesn't give the desired result
+        try:
+            self.picam2.set_controls({"HFlip": 0, "VFlip": 0})
+            print("DEBUG: Forced HFlip/VFlip controls to 0")
+        except Exception as e:
+            print(f"DEBUG: Could not set flip controls: {e}")
+        # ---------------------------
+
         self.preview_started = True
         return self.preview_widget
 
