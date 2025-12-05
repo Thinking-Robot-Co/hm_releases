@@ -116,7 +116,7 @@ class MainWindow(QMainWindow):
         bottom_layout.addWidget(self.type_dropdown)
 
         # Video toggle button.
-        self.video_btn = QPushButton("Start $$ ")
+        self.video_btn = QPushButton("Start Video")
         self.video_btn.setFixedSize(150, 40)
         self.video_btn.clicked.connect(self.toggle_video_recording)
         bottom_layout.addWidget(self.video_btn)
