@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>HELMET HUD {{ version }}</title>
+    <!-- Leaflet CSS for Maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        :root {
+            --primary: #00ff41; /* Cyberpunk Green */
+            --danger: #ff003c;
+            --warn: #ffbb00;
+            --bg: #0a0a0a;
+            --panel: #111;
+            --border: #333;
+        }
+
+        body { 
+            font-family: 'Courier New', Courier, monospace; 
+            background: var(--bg); 
+            color: #eee; 
+            text-align: center; 
+            margin: 0; padding: 0; padding-bottom: 100px; /* Extra padding for floating bar */
+            overflow-x: hidden; user-select: none;
+        }
+        
+        /* Headers & Layout */
+        .header { 
+            padding: 10px; background: var(--panel); border-bottom: 2px solid var(--primary);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        h2 { margin: 0; font-size: 1rem; color: var(--primary); letter-spacing: 2px; }
+        .badge { font-size: 0.7rem; background: #222; padding: 2px 5px; border-radius: 3px; }
+
+        /* Live Monitor */
+        .monitor-frame {
+            position: relative; width: 100%; max-width: 640px; margin: 10px auto;
+            border: 1px solid var(--border); background: #000;
+            min-height: 240px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .monitor { width: 100%; height: auto; display: block; min-height: 240px; }
+        
+        .hud-overlay {
+            position: absolute; top: 10px; left: 10px; color: var(--primary);
+            font-size: 12px; text-shadow: 1px 1px 2px black; pointer-events: none;
+        }
+        .rec-indicator {
+            position: absolute; top: 10px; right: 10px; color: var(--danger);
+            font-weight: bold; display: none; animation: blink 1s infinite;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+
+        /* Info Grid */
+        .info-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+            max-width: 600px; margin: 10px auto; padding: 0 10px; font-size: 0.8rem;
+        }
+        .info-box { background: #1a1a1a; border: 1px solid #333; padding: 8px; text-align: left; }
+        .info-val { color: #fff; font-weight: bold; }
+        .info-label { color: #888; font-size: 0.7rem; display: block; }
+
+        /* Controls */
+        .control-panel { padding: 10px; max-width: 600px; margin: 0 auto; }
+        .btn-group { display: flex; gap: 10px; justify-content: center; }
+        
+        button {
+            padding: 15px 0; font-size: 14px; border: 1px solid var(--primary); 
+            background: rgba(0, 255, 65, 0.1); color: var(--primary); cursor: pointer; 
+            font-weight: bold; flex: 1; text-transform: uppercase; font-family: inherit;
+        }
+        button:active { background: var(--primary); color: black; }
+        button:disabled { opacity: 0.3; cursor: not-allowed; border-color: #555; color: #555; }
+        .btn-stop { border-color: var(--danger); color: var(--danger); background: rgba(255, 0, 60, 0.1); }
+        .btn-stop:active { background: var(--danger); color: white; }
+        .btn-snap { border-color: var(--warn); color: var(--warn); background: rgba(255, 187, 0, 0.1); }
+        .btn-snap:active { background: var(--warn); color: black; }
+
+        /* Media Library */
+        .library-section { max-width: 640px; margin: 20px auto; text-align: left; padding: 10px; }
+        .library-header { font-size: 1rem; border-bottom: 1px solid var(--border); padding-bottom: 5px; color: var(--primary); }
+        
+        .media-item-container {
+            position: relative; margin-bottom: 8px; overflow: hidden; height: 50px; background: #000;
+        }
+        .media-actions {
+            position: absolute; top: 0; bottom: 0; width: 100%; display: flex; justify-content: space-between; align-items: center;
+            padding: 0 20px; box-sizing: border-box; font-weight: bold; font-size: 12px;
+        }
+        .action-left { color: var(--warn); text-align: left; }
+        .action-right { color: #00b7ff; text-align: right; }
+        
+        .media-item { 
+            position: relative; z-index: 10; height: 100%;
+            background: #1a1a1a; padding: 0 12px; border-left: 3px solid #333;
+            display: flex; justify-content: space-between; align-items: center;
+            transition: transform 0.2s ease-out, background 0.2s;
+        }
+        .media-item.swiping { transition: none; }
+        .vid-name { font-size: 11px; color: #ccc; }
+        .vid-meta { font-size: 9px; color: #666; margin-left: 5px; }
+        .vid-icon { font-size: 14px; width: 20px; text-align: center; }
+        .icon-vid { color: var(--primary); }
+        .icon-img { color: var(--warn); }
+
+        /* Modals */
+        #playbackModal, #confirmModal, #linkModal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95); z-index: 200; overflow-y: auto;
+        }
+        .modal-content { max-width: 800px; margin: 20px auto; padding: 10px; }
+        .close-btn { 
+            float: right; font-size: 18px; cursor: pointer; color: var(--danger); 
+            border: 1px solid var(--danger); padding: 5px 10px; margin-bottom: 10px;
+        }
+        video, img.playback-img { width: 100%; border: 1px solid #333; margin-bottom: 10px; }
+        #map { height: 300px; width: 100%; border: 1px solid #333; background: #222; }
+        .link-display { width: 100%; background: #222; border: 1px solid #444; color: #00b7ff; padding: 15px; margin: 10px 0; font-family: monospace; word-break: break-all; }
+
+        /* Toast */
+        #toast {
+            visibility: hidden; min-width: 250px; background-color: #333; color: #fff;
+            text-align: center; border-radius: 2px; padding: 16px; position: fixed;
+            z-index: 300; left: 50%; bottom: 100px; transform: translateX(-50%);
+            border: 1px solid var(--primary); font-size: 12px;
+        }
+        #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
+        @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 100px; opacity: 1;} }
+        @keyframes fadeout { from {bottom: 100px; opacity: 1;} to {bottom: 0; opacity: 0;} }
+
+        /* Delete Modal */
+        .confirm-box {
+            background: #111; border: 1px solid var(--danger); padding: 20px; margin-top: 50%; text-align: center;
+        }
+        
+        /* Floating Status Bar (Fixed Layout) */
+        .status-bar-container {
+            position: fixed; 
+            bottom: 20px; left: 15px; right: 15px;
+            background: rgba(0, 0, 0, 0.9); 
+            border: 1px solid #444; 
+            border-radius: 8px;
+            padding: 10px 15px;
+            font-size: 12px; 
+            display: flex; 
+            justify-content: space-between;
+            z-index: 999;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+    </style>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+
+    <div class="header">
+        <h2>HELMET::LINK</h2>
+        <span class="badge">{{ version }}</span>
+    </div>
+
+    {% if missing_lib %}
+    <div style="border: 2px solid var(--danger); padding:20px; margin:20px; color: var(--danger);">
+        <h3>SYSTEM CRITICAL</h3>
+        <p>HARDWARE ERROR: Libraries missing.</p>
+    </div>
+    {% else %}
+    
+    <!-- LIVE VIEW -->
+    <div class="monitor-frame">
+        <img src="/video_feed" class="monitor" id="camStream" onerror="reloadStream()" />
+        <div class="hud-overlay">
+            <div>GPS: <span id="gpsOverlay">SEARCHING...</span></div>
+            <div>SPD: <span id="spdOverlay">0.0</span> m/s</div>
+        </div>
+        <div class="rec-indicator" id="recDot">REC</div>
+    </div>
+
+    <!-- INFO GRID -->
+    <div class="info-grid">
+        <div class="info-box">
+            <span class="info-label">STORAGE</span>
+            <span class="info-val" id="storageVal">-- GB</span>
+        </div>
+        <div class="info-box">
+            <span class="info-label">STATUS</span>
+            <span class="info-val" id="sysStatus">STANDBY</span>
+        </div>
+    </div>
+
+    <!-- CONTROLS -->
+    <div class="control-panel">
+        <div class="btn-group">
+            <button id="snapBtn" class="btn-snap" onclick="snapPhoto()">SNAP PIC</button>
+            <button id="startBtn" onclick="startRecording()">REC VIDEO</button>
+            <button id="stopBtn" class="btn-stop" onclick="stopRecording()" disabled>STOP</button>
+        </div>
+    </div>
+
+    <!-- LIBRARY -->
+    <div class="library-section">
+        <div class="library-header">MEDIA LOGS (Swipe L/R)</div>
+        <div id="mediaList">Loading archives...</div>
+    </div>
+
+    <!-- MODALS -->
+    <div id="playbackModal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal()">CLOSE [X]</span>
+            <h3 id="modalTitle" style="color:var(--primary); font-size:12px; margin-bottom:5px;">PLAYBACK</h3>
+            <div id="mediaContainer"></div>
+            <div id="map"></div>
+        </div>
+    </div>
+
+    <div id="linkModal">
+        <div class="confirm-box">
+            <h3 style="color:#00b7ff">DOWNLOAD FILE</h3>
+            <p style="color:#aaa; font-size:10px;">Copy this link to Chrome/Browser</p>
+            <textarea id="downloadUrlBox" class="link-display" readonly></textarea>
+            <br>
+            <div class="btn-group">
+                <button onclick="document.getElementById('linkModal').style.display='none'" style="border-color:#555; color:#aaa">CLOSE</button>
+                <button onclick="copyLink()" style="border-color:#00b7ff; color:#00b7ff">COPY LINK</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="confirmModal">
+        <div class="confirm-box">
+            <h3 style="color:var(--danger)">CONFIRM DELETION</h3>
+            <p id="delFileName" style="color:#ccc; font-size:12px"></p>
+            <br>
+            <div class="btn-group">
+                <button onclick="closeConfirm()" style="border-color:#555; color:#aaa">CANCEL</button>
+                <button class="btn-stop" onclick="executeDelete()">DELETE</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOAST -->
+    <div id="toast">Notification</div>
+
+    <!-- STATUS BAR (UPDATED) -->
+    <div class="status-bar-container">
+        <span id="gpsStat" style="color:#666">GPS: WAIT</span>
+        <span id="recTimer" style="color:var(--danger); font-weight:bold; display:none">00:00:00</span>
+    </div>
+    {% endif %}
+
+    <script>
+        let recStartTime = 0;
+        let recInterval = null;
+        let map = null;
+        let marker = null;
+        let gpsTrack = [];
+        let wakeLock = null;
+        let deleteTarget = null;
+
+        // --- Stream Auto-Heal Logic ---
+        function reloadStream() {
+            console.log("Stream died, reloading...");
+            setTimeout(() => {
+                const img = document.getElementById('camStream');
+                img.src = "/video_feed?" + new Date().getTime();
+            }, 1000);
+        }
+
+        // Re-connect stream when app comes to foreground
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") {
+                console.log("App visible, refreshing stream...");
+                reloadStream();
+                requestWakeLock();
+                // Force status update immediately
+                checkStatus(); 
+            }
+        });
+
+        // --- Standard Logic ---
+        function showToast(msg) {
+            const x = document.getElementById("toast");
+            x.innerText = msg;
+            x.className = "show";
+            setTimeout(() => { x.className = x.className.replace("show", ""); }, 3000);
+        }
+
+        async function requestWakeLock() {
+            try { wakeLock = await navigator.wakeLock.request('screen'); } catch (err) {}
+        }
+
+        async function snapPhoto() {
+            showToast("Capturing...");
+            try {
+                const res = await fetch('/api/capture_photo');
+                if(res.ok && await res.text() === "OK") {
+                    showToast("Photo Saved");
+                    loadLibrary();
+                } else showToast("Error Taking Photo");
+            } catch(e) { showToast("Connection Error"); }
+        }
+
+        async function startRecording() {
+            requestWakeLock();
+            try {
+                const res = await fetch('/api/start_record');
+                if (res.ok && await res.text() === "OK") updateRecUI(true);
+            } catch(e) { showToast("Start Failed"); }
+        }
+
+        async function stopRecording() {
+            try {
+                const res = await fetch('/api/stop_record', { method: 'POST' });
+                if (res.ok && await res.text() === "OK") {
+                    updateRecUI(false);
+                    setTimeout(loadLibrary, 1000);
+                }
+            } catch(e) { showToast("Stop Failed - Check Connection"); }
+        }
+
+        async function deleteFile(filename) {
+            deleteTarget = filename;
+            document.getElementById('delFileName').innerText = filename;
+            document.getElementById('confirmModal').style.display = 'block';
+        }
+
+        async function executeDelete() {
+            if(!deleteTarget) return;
+            const res = await fetch('/api/delete_file', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({filename: deleteTarget})
+            });
+            closeConfirm();
+            if (await res.text() === "OK") {
+                showToast("File Deleted");
+                loadLibrary();
+            } else {
+                showToast("Delete Failed");
+            }
+        }
+
+        async function loadLibrary() {
+            try {
+                const res = await fetch('/api/list_media');
+                if (res.status === 404) return;
+                const files = await res.json();
+                const list = document.getElementById('mediaList');
+                list.innerHTML = "";
+                
+                if (files.length === 0) list.innerHTML = "<div style='color:#666; font-size:12px;'>NO DATA LOGS FOUND.</div>";
+                
+                files.forEach(f => {
+                    const container = document.createElement('div');
+                    container.className = "media-item-container";
+                    const actions = document.createElement('div');
+                    actions.className = "media-actions";
+                    actions.innerHTML = `<span class="action-left">< Cloud Upload</span><span class="action-right">Get Link ></span>`;
+                    
+                    const item = document.createElement('div');
+                    item.className = "media-item";
+                    const icon = f.type === 'video' ? '<span class="vid-icon icon-vid">▶</span>' : '<span class="vid-icon icon-img">📷</span>';
+                    item.innerHTML = `${icon} <div><span class="vid-name">${f.name}</span><span class="vid-meta">${f.size} MB</span></div>`;
+                    
+                    let startX = 0;
+                    let currentX = 0;
+                    let isSwiping = false;
+                    let longPressTimer = null;
+                    let isLongPress = false;
+
+                    item.addEventListener('touchstart', (e) => {
+                        startX = e.touches[0].clientX;
+                        isSwiping = false;
+                        isLongPress = false;
+                        item.classList.remove('swiping');
+                        longPressTimer = setTimeout(() => {
+                            isLongPress = true;
+                            if(navigator.vibrate) navigator.vibrate(50);
+                            deleteFile(f.name);
+                        }, 800);
+                    }, {passive: true});
+
+                    item.addEventListener('touchmove', (e) => {
+                        const x = e.touches[0].clientX;
+                        const diff = x - startX;
+                        if (Math.abs(diff) > 10) clearTimeout(longPressTimer);
+                        if (Math.abs(diff) > 20) {
+                            isSwiping = true;
+                            currentX = diff;
+                            if(currentX > 150) currentX = 150;
+                            if(currentX < -150) currentX = -150;
+                            item.style.transform = `translateX(${currentX}px)`;
+                            if(currentX > 50) item.style.borderLeftColor = "#00b7ff";
+                            else if(currentX < -50) item.style.borderLeftColor = "#ffbb00";
+                            else item.style.borderLeftColor = "#333";
+                        }
+                    }, {passive: true});
+
+                    item.addEventListener('touchend', (e) => {
+                        clearTimeout(longPressTimer);
+                        item.classList.add('swiping');
+                        if (!isLongPress) {
+                            if (currentX > 100) showLinkModal(f.name);
+                            else if (currentX < -100) showToast("Uploading to Cloud...");
+                            else if (!isSwiping) openPlayback(f);
+                        }
+                        item.style.transform = `translateX(0px)`;
+                        item.style.borderLeftColor = "#333";
+                        currentX = 0;
+                    });
+                    container.appendChild(actions);
+                    container.appendChild(item);
+                    list.appendChild(container);
+                });
+            } catch(e) {}
+        }
+
+        function showLinkModal(filename) {
+            const fullUrl = `${window.location.protocol}//${window.location.host}/api/download/${filename}`;
+            const box = document.getElementById('downloadUrlBox');
+            box.value = fullUrl;
+            document.getElementById('linkModal').style.display = 'block';
+            box.focus();
+            box.select();
+        }
+
+        function copyLink() {
+            const box = document.getElementById('downloadUrlBox');
+            box.select();
+            document.execCommand('copy');
+            showToast("LINK COPIED");
+        }
+
+        function openPlayback(file) {
+            document.getElementById('playbackModal').style.display = 'block';
+            document.getElementById('modalTitle').innerText = file.name;
+            const container = document.getElementById('mediaContainer');
+            container.innerHTML = "";
+            
+            if (file.type === 'video') {
+                const vid = document.createElement('video');
+                vid.src = `/data/${file.name}`;
+                vid.controls = true;
+                vid.playsInline = true;
+                vid.id = "videoPlayer";
+                container.appendChild(vid);
+                initMap(file.name);
+            } else {
+                const img = document.createElement('img');
+                img.src = `/data/${file.name}`;
+                img.className = "playback-img";
+                container.appendChild(img);
+                initMap(file.name);
+            }
+        }
+
+        function initGPS() {
+            if ("geolocation" in navigator) {
+                navigator.geolocation.watchPosition(
+                    (pos) => {
+                        const d = {
+                            lat: pos.coords.latitude, lon: pos.coords.longitude,
+                            accuracy: pos.coords.accuracy, speed: pos.coords.speed || 0
+                        };
+                        document.getElementById('gpsStat').innerText = "GPS: LOCKED";
+                        document.getElementById('gpsStat').style.color = "#00ff41";
+                        document.getElementById('gpsOverlay').innerText = `${d.lat.toFixed(4)}, ${d.lon.toFixed(4)}`;
+                        document.getElementById('spdOverlay').innerText = d.speed.toFixed(1);
+                        fetch('/api/update_gps', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(d)}).catch(()=>{});
+                    },
+                    (err) => {}, { enableHighAccuracy: true }
+                );
+            }
+        }
+
+        async function initMap(filename) {
+            let csvName = filename;
+            if (filename.endsWith('.mp4')) csvName = filename.replace("video_", "gps_").replace(".mp4", ".csv");
+            else if (filename.endsWith('.jpg')) csvName = filename.replace("img_", "gps_").replace(".jpg", ".csv");
+
+            try {
+                const res = await fetch(`/data/${csvName}`);
+                if(!res.ok) throw new Error("No GPS");
+                const text = await res.text();
+                const lines = text.trim().split('\n');
+                if(lines.length < 2) return;
+                const startRow = lines[1].split(',');
+                const startTime = new Date(startRow[0]).getTime();
+                gpsTrack = lines.slice(1).map(line => {
+                    const cols = line.split(',');
+                    return { relTime: (new Date(cols[0]).getTime() - startTime)/1000, lat: parseFloat(cols[1]), lon: parseFloat(cols[2]) };
+                });
+                if(gpsTrack.length === 0) return;
+                
+                if(map) { map.remove(); map = null; }
+                map = L.map('map').setView([gpsTrack[0].lat, gpsTrack[0].lon], 16);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: 'OSM' }).addTo(map);
+                L.polyline(gpsTrack.map(p=>[p.lat, p.lon]), {color: '#00ff41', weight: 4}).addTo(map);
+                marker = L.marker([gpsTrack[0].lat, gpsTrack[0].lon]).addTo(map);
+                
+                const vid = document.getElementById('videoPlayer');
+                if(vid) {
+                    vid.ontimeupdate = () => {
+                        const ct = vid.currentTime;
+                        let closest = gpsTrack.reduce((prev, curr) => Math.abs(curr.relTime - ct) < Math.abs(prev.relTime - ct) ? curr : prev);
+                        marker.setLatLng([closest.lat, closest.lon]);
+                    };
+                }
+            } catch(e) {
+                document.getElementById('map').innerHTML = "<div style='padding:20px; color:#666;'>NO GPS DATA</div>";
+            }
+        }
+
+        function updateRecUI(isRecording) {
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            const snapBtn = document.getElementById('snapBtn');
+            const timer = document.getElementById('recTimer');
+            const recDot = document.getElementById('recDot');
+            if (isRecording) {
+                startBtn.disabled = true; stopBtn.disabled = false; snapBtn.disabled = true;
+                timer.style.display = "block"; recDot.style.display = "block";
+                // If we don't have a start time yet (page reload), assume now
+                if(recStartTime === 0) recStartTime = Date.now(); 
+                
+                if (!recInterval) {
+                    recInterval = setInterval(() => {
+                        // Just show a running counter, accurate sync is hard without server time
+                        const diff = Math.floor((Date.now() - recStartTime) / 1000);
+                        const h = Math.floor(diff / 3600).toString().padStart(2,'0');
+                        const m = Math.floor((diff % 3600) / 60).toString().padStart(2,'0');
+                        const s = (diff % 60).toString().padStart(2,'0');
+                        timer.innerText = `${h}:${m}:${s}`;
+                    }, 1000);
+                }
+            } else {
+                startBtn.disabled = false; stopBtn.disabled = true; snapBtn.disabled = false;
+                timer.style.display = "none"; recDot.style.display = "none";
+                if(recInterval) { clearInterval(recInterval); recInterval = null; }
+                recStartTime = 0;
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('playbackModal').style.display = 'none';
+            const vid = document.getElementById('videoPlayer');
+            if(vid) vid.pause();
+            if(map) { map.remove(); map = null; }
+        }
+
+        function closeConfirm() {
+            document.getElementById('confirmModal').style.display = 'none';
+            deleteTarget = null;
+        }
+
+        async function checkStatus() {
+            try {
+                const r = await fetch('/api/status');
+                const j = await r.json();
+                document.getElementById('sysStatus').innerText = j.status;
+                document.getElementById('storageVal').innerText = j.storage_free_gb + " GB";
+                
+                // Sync UI state with backend
+                if (j.status === "RECORDING") {
+                    updateRecUI(true);
+                } else {
+                    updateRecUI(false);
+                }
+            } catch(e) {}
+        }
+
+        setInterval(checkStatus, 2000);
+
+        window.onload = () => { initGPS(); loadLibrary(); requestWakeLock(); };
+    </script>
+</body>
+</html>
