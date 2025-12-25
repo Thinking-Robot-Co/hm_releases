@@ -2,6 +2,7 @@
 """
 Smart Helmet Camera System v27.1-GPS-FIXED
 Complete camera system with cloud upload and GPS location tracking
+Auto-generates SSL certificates if missing
 """
 import time
 import os
@@ -76,6 +77,37 @@ is_recording_active = False
 # Track upload status
 upload_status = {}  # {filename: {"status": "uploading"/"success"/"failed", "message": ""}}
 upload_status_lock = threading.Lock()
+
+# ==========================================
+# SSL CERTIFICATE GENERATOR
+# ==========================================
+def generate_ssl_certificates():
+    """Generate self-signed SSL certificates if they don't exist"""
+    if os.path.exists('cert.pem') and os.path.exists('key.pem'):
+        logging.info("[SSL] ✓ Certificates already exist")
+        return True
+
+    logging.info("[SSL] Generating self-signed certificates...")
+    try:
+        cmd = [
+            'openssl', 'req', '-x509', '-newkey', 'rsa:2048',
+            '-keyout', 'key.pem', '-out', 'cert.pem',
+            '-days', '365', '-nodes',
+            '-subj', '/C=IN/ST=Maharashtra/L=Nagpur/O=ThinkingRobot/OU=SmartHelmet/CN=raspberrypi'
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode == 0 and os.path.exists('cert.pem') and os.path.exists('key.pem'):
+            os.chmod('key.pem', 0o600)
+            os.chmod('cert.pem', 0o600)
+            logging.info("[SSL] ✓ Certificates generated successfully")
+            return True
+        else:
+            logging.warning(f"[SSL] ✗ Certificate generation failed: {result.stderr}")
+            return False
+    except Exception as e:
+        logging.warning(f"[SSL] ✗ Could not generate certificates: {e}")
+        return False
 
 # ==========================================
 # VIDEO CONVERTER
@@ -502,6 +534,9 @@ if __name__ == '__main__':
     print(f"  Upload URL: https://centrix.co.in/v_api/upload")
     print("=" * 70)
 
+    # Generate SSL certificates if needed
+    ssl_available = generate_ssl_certificates()
+
     logging.info(f"[MAIN] Starting threads...")
     threading.Thread(target=discovery_service, daemon=True).start()
     threading.Thread(target=camera_worker, daemon=True).start()
@@ -509,7 +544,12 @@ if __name__ == '__main__':
     logging.info(f"[MAIN] Starting Flask on port {PORT}...")
 
     try:
-        app.run(host='0.0.0.0', port=PORT, ssl_context=('cert.pem', 'key.pem'), debug=False, threaded=True)
+        if ssl_available:
+            logging.info(f"[MAIN] Starting with HTTPS (SSL enabled)")
+            app.run(host='0.0.0.0', port=PORT, ssl_context=('cert.pem', 'key.pem'), debug=False, threaded=True)
+        else:
+            logging.warning(f"[MAIN] Starting with HTTP (SSL not available)")
+            app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
     except KeyboardInterrupt:
         logging.info("[MAIN] Keyboard interrupt")
     finally:
