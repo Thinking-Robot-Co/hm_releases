@@ -1,7 +1,6 @@
 """
-Cloud Upload Module for Smart Helmet v2
-Handles video and GPS CSV uploads to Centrix API
-Extracts start/end location from CSV and sends as separate fields
+Cloud Upload Module for Smart Helmet v3
+Renames uploaded files instead of deleting them
 """
 import os
 import logging
@@ -66,6 +65,7 @@ def extract_gps_from_csv(csv_path):
 def upload_to_cloud(video_path, csv_path, device_id):
     """
     Upload video and GPS data to cloud with detailed debug logging
+    Renames files after successful upload instead of deleting
     Returns: (success: bool, message: str)
     """
     try:
@@ -157,15 +157,23 @@ def upload_to_cloud(video_path, csv_path, device_id):
                 if result.get("success"):
                     logging.info("[UPLOAD] ✅ SUCCESS!")
 
-                    # Delete local files after successful upload
+                    # Rename files instead of deleting
                     try:
-                        os.remove(video_path)
-                        logging.info(f"[UPLOAD] 🗑️ Deleted local video: {filename}")
+                        # Rename video
+                        new_video_name = filename.replace('video_', 'uploaded_')
+                        new_video_path = os.path.join(os.path.dirname(video_path), new_video_name)
+                        os.rename(video_path, new_video_path)
+                        logging.info(f"[UPLOAD] ✓ Renamed video: {new_video_name}")
+
+                        # Rename CSV
                         if csv_exists:
-                            os.remove(csv_path)
-                            logging.info(f"[UPLOAD] 🗑️ Deleted local CSV: {os.path.basename(csv_path)}")
-                    except Exception as del_err:
-                        logging.warning(f"[UPLOAD] ⚠️ Could not delete local files: {del_err}")
+                            csv_filename = os.path.basename(csv_path)
+                            new_csv_name = csv_filename.replace('gps_', 'uploaded_gps_')
+                            new_csv_path = os.path.join(os.path.dirname(csv_path), new_csv_name)
+                            os.rename(csv_path, new_csv_path)
+                            logging.info(f"[UPLOAD] ✓ Renamed CSV: {new_csv_name}")
+                    except Exception as rename_err:
+                        logging.warning(f"[UPLOAD] ⚠️ Could not rename files: {rename_err}")
 
                     return True, "Upload successful"
                 else:

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Smart Helmet Camera System v27.1-GPS-FIXED
-Complete camera system with cloud upload and GPS location tracking
-Auto-generates SSL certificates if missing
+Smart Helmet Camera System v27.2-REDUCED-SIZE
+Reduced video file size + keeps uploaded files with tick mark
 """
 import time
 import os
@@ -27,15 +26,18 @@ from libcamera import Transform
 from uploader import upload_to_cloud
 
 # --- CONFIGURATION ---
-VERSION = "v27.1-GPS-FIXED"
+VERSION = "v27.2-REDUCED-SIZE"
 RECORD_FOLDER = "recordings"
 PORT = 5001
 CAM_WIDTH, CAM_HEIGHT = 1640, 1232 
 FPS = 30.0
 STREAM_HEIGHT = 480
 
+# Video bitrate - REDUCED for smaller file sizes
+VIDEO_BITRATE = 4000000  # 4 Mbps (was 12 Mbps) - 3x smaller files!
+
 # Device ID for cloud uploads
-DEVICE_ID = "smart_hm_02"  # Fixed device ID
+DEVICE_ID = "smart_hm_02"
 
 # Discovery
 DISCOVERY_PORT = 5002
@@ -75,7 +77,7 @@ req_stop_rec = False
 is_recording_active = False 
 
 # Track upload status
-upload_status = {}  # {filename: {"status": "uploading"/"success"/"failed", "message": ""}}
+upload_status = {}
 upload_status_lock = threading.Lock()
 
 # ==========================================
@@ -192,9 +194,11 @@ def camera_worker():
 
                     try:
                         logging.info(f"[RECORD] Creating encoder...")
-                        current_encoder = H264Encoder(bitrate=12000000, profile="high")
+                        # REDUCED BITRATE for smaller files
+                        current_encoder = H264Encoder(bitrate=VIDEO_BITRATE, profile="high")
 
                         logging.info(f"[RECORD] Starting: {current_h264_name}")
+                        logging.info(f"[RECORD] Bitrate: {VIDEO_BITRATE/1000000} Mbps")
                         picam2.start_recording(current_encoder, current_h264_name)
 
                         csv_file = open(c_path, 'w', newline='')
@@ -398,10 +402,11 @@ def get_status():
 
 @app.route('/api/list_media')
 def list_media():
-    """List all videos and images including temp files"""
+    """List all videos and images including temp/uploaded files"""
     # Get MP4 videos
     v = glob.glob(os.path.join(RECORD_FOLDER, "video_*.mp4"))
     v += glob.glob(os.path.join(RECORD_FOLDER, "failed_upload_*.mp4"))
+    v += glob.glob(os.path.join(RECORD_FOLDER, "uploaded_*.mp4"))  # NEW: Include uploaded files
 
     # Get temp H264 files (still converting)
     temp = glob.glob(os.path.join(RECORD_FOLDER, "temp_*.h264"))
@@ -419,6 +424,7 @@ def list_media():
             s = 0
         is_failed = n.startswith('failed_upload_')
         is_converting = n.startswith('temp_') and n.endswith('.h264')
+        is_uploaded = n.startswith('uploaded_')  # NEW: Check if uploaded
 
         # Check upload status
         upload_info = None
@@ -428,10 +434,11 @@ def list_media():
 
         res.append({
             "name": n, 
-            "type": "video" if ("video" in n or "failed" in n or "temp" in n) else "image", 
+            "type": "video" if ("video" in n or "failed" in n or "temp" in n or "uploaded" in n) else "image", 
             "size": s,
             "failed": is_failed,
             "converting": is_converting,
+            "uploaded": is_uploaded,  # NEW: Upload flag
             "upload_status": upload_info
         })
     return jsonify(res)
@@ -505,6 +512,7 @@ def delete_file():
         # Delete CSV too
         csv_name = n.replace("video_", "gps_").replace("img_", "gps_")
         csv_name = csv_name.replace("failed_upload_", "failed_upload_gps_")
+        csv_name = csv_name.replace("uploaded_", "uploaded_gps_")  # NEW: Handle uploaded files
         csv_name = csv_name.replace("temp_", "gps_")
         csv_name = csv_name.replace(".mp4", ".csv").replace(".jpg", ".csv").replace(".h264", ".csv")
         csv_path = os.path.join(RECORD_FOLDER, csv_name)
@@ -531,6 +539,7 @@ if __name__ == '__main__':
     print(f"  Port: {PORT}")
     print(f"  Device ID: {DEVICE_ID}")
     print(f"  Recording: {RECORD_FOLDER}")
+    print(f"  Video Bitrate: {VIDEO_BITRATE/1000000} Mbps (reduced for smaller files)")
     print(f"  Upload URL: https://centrix.co.in/v_api/upload")
     print("=" * 70)
 
