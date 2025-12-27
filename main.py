@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
 """
-Smart Helmet Camera System v27.10-BATCH-RENAME
-- Added batch rename for video session chunks
-- Renames all chunks in a session with user-provided name
+Smart Helmet Camera System v27.11-GPS-FIX
+
+- FIXED: GPS data now properly sent from browser to backend
+- FIXED: Orphaned temp files after crash marked as incomplete
+- Auto-recovery of incomplete files on startup
+
 """
 
 import time
@@ -28,7 +31,7 @@ from libcamera import Transform
 from uploader import upload_to_cloud
 
 # --- CONFIGURATION ---
-VERSION = "v27.10-BATCH-RENAME"
+VERSION = "v27.11-GPS-FIX"
 RECORD_FOLDER = "recordings"
 PORT = 5001
 CAM_WIDTH, CAM_HEIGHT = 1640, 1232
@@ -46,6 +49,7 @@ AUDIO_ENABLED_DEFAULT = True
 AUDIO_SAMPLE_RATE = 44100
 AUDIO_CHANNELS = 1
 USB_MIC_DEVICE = "hw:3,0"
+
 DEVICE_ID = "smart_hm_02"
 
 # Discovery
@@ -92,6 +96,60 @@ current_recording_files = []
 current_recording_lock = threading.Lock()
 converting_files = set()
 converting_files_lock = threading.Lock()
+incomplete_files = set()
+incomplete_files_lock = threading.Lock()
+
+# ==========================================
+# ORPHANED FILE RECOVERY (NEW!)
+# ==========================================
+def recover_orphaned_files():
+    """
+    Find and mark orphaned temp_*.h264 files from previous crash/power cut
+    Mark them as incomplete_*.h264 so user can delete them
+    """
+    orphaned = glob.glob(os.path.join(RECORD_FOLDER, "temp_*.h264"))
+
+    if not orphaned:
+        logging.info("[RECOVERY] ✓ No orphaned files found")
+        return
+
+    logging.info(f"[RECOVERY] Found {len(orphaned)} orphaned file(s)")
+
+    for temp_file in orphaned:
+        try:
+            temp_name = os.path.basename(temp_file)
+            incomplete_name = temp_name.replace('temp_', 'incomplete_')
+            incomplete_path = os.path.join(RECORD_FOLDER, incomplete_name)
+
+            # Rename to incomplete
+            os.rename(temp_file, incomplete_path)
+
+            # Mark in global set
+            with incomplete_files_lock:
+                incomplete_files.add(incomplete_name)
+
+            # Also rename associated GPS CSV if it exists
+            csv_name = temp_name.replace('temp_', 'gps_').replace('.h264', '.csv')
+            csv_path = os.path.join(RECORD_FOLDER, csv_name)
+            if os.path.exists(csv_path):
+                incomplete_csv = csv_name.replace('gps_', 'incomplete_gps_')
+                incomplete_csv_path = os.path.join(RECORD_FOLDER, incomplete_csv)
+                os.rename(csv_path, incomplete_csv_path)
+
+            # Also rename audio if exists
+            audio_name = temp_name.replace('temp_', 'audio_').replace('.h264', '.wav')
+            audio_path = os.path.join(RECORD_FOLDER, audio_name)
+            if os.path.exists(audio_path):
+                incomplete_audio = audio_name.replace('audio_', 'incomplete_audio_')
+                incomplete_audio_path = os.path.join(RECORD_FOLDER, incomplete_audio)
+                os.rename(audio_path, incomplete_audio_path)
+
+            logging.info(f"[RECOVERY] ⚠️ Marked as incomplete: {incomplete_name}")
+
+        except Exception as e:
+            logging.error(f"[RECOVERY] Error processing {temp_file}: {e}")
+
+    logging.info(f"[RECOVERY] ✓ Marked {len(orphaned)} orphaned files as incomplete")
 
 # ==========================================
 # SSL CERTIFICATE GENERATOR
@@ -110,6 +168,7 @@ def generate_ssl_certificates():
             '-days', '365', '-nodes',
             '-subj', '/C=IN/ST=Maharashtra/L=Nagpur/O=ThinkingRobot/OU=SmartHelmet/CN=raspberrypi'
         ]
+
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0 and os.path.exists('cert.pem') and os.path.exists('key.pem'):
             os.chmod('key.pem', 0o600)
@@ -148,6 +207,7 @@ def start_audio_recording(audio_file):
             "-r", str(AUDIO_SAMPLE_RATE),
             audio_file
         ]
+
         audio_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         logging.info(f"[AUDIO] Started recording to {audio_file}")
         return audio_process
@@ -184,6 +244,7 @@ def convert_and_merge(h264_path, audio_path, mp4_path):
         converting_files.add(mp4_name)
 
     time.sleep(2.0)
+
     try:
         logging.info(f"[CONVERT] Starting: {h264_path}")
         has_audio = os.path.exists(audio_path) and os.path.getsize(audio_path) > 1000
@@ -222,8 +283,10 @@ def convert_and_merge(h264_path, audio_path, mp4_path):
             logging.info(f"[CONVERT] ✓ Success: {mp4_path}")
         else:
             logging.error("[CONVERT] ✗ Failed")
+
     except Exception as e:
         logging.error(f"[CONVERT] ✗ Error: {e}")
+
     finally:
         with converting_files_lock:
             converting_files.discard(mp4_name)
@@ -238,6 +301,7 @@ def camera_worker():
     global current_recording_files
 
     logging.info(f"[CAMERA] Thread started")
+
     csv_file = None
     csv_writer = None
     last_gps_time = 0
@@ -250,6 +314,7 @@ def camera_worker():
     try:
         logging.info(f"[CAMERA] Initializing Picamera2...")
         picam2 = Picamera2()
+
         config = picam2.create_video_configuration(
             main={"size": (CAM_WIDTH, CAM_HEIGHT), "format": "YUV420"},
             lores={"size": (640, 480), "format": "YUV420"},
@@ -258,13 +323,17 @@ def camera_worker():
             buffer_count=6
         )
         config["sensor"]["output_size"] = (CAM_WIDTH, CAM_HEIGHT)
+
         logging.info(f"[CAMERA] Configuring...")
         picam2.configure(config)
+
         logging.info(f"[CAMERA] Starting camera...")
         picam2.start()
         picam2.set_controls({"ScalerCrop": (0, 0, 3280, 2464)})
+
         logging.info(f"[CAMERA] ✓ Ready!")
         time.sleep(0.5)
+
     except Exception as e:
         logging.critical(f"[CAMERA] ✗ Hardware Error: {e}")
         return
@@ -288,12 +357,15 @@ def camera_worker():
                     try:
                         logging.info(f"[RECORD] Creating encoder...")
                         current_encoder = H264Encoder(bitrate=VIDEO_BITRATE, profile="high")
+
                         logging.info(f"[RECORD] Starting video chunk {chunk_number}: {current_h264_name}")
                         picam2.start_recording(current_encoder, current_h264_name)
                         start_audio_recording(current_audio_name)
+
                         csv_file = open(c_path, 'w', newline='')
                         csv_writer = csv.writer(csv_file)
                         csv_writer.writerow(["Timestamp", "Lat", "Lon", "Acc", "Speed"])
+
                         is_recording_active = True
 
                         with current_recording_lock:
@@ -304,6 +376,7 @@ def camera_worker():
                             })
 
                         logging.info(f"[RECORD] ✓ STARTED (Audio: {audio_enabled})")
+
                     except Exception as rec_err:
                         logging.error(f"[RECORD] ✗ Start failed: {rec_err}")
                         is_recording_active = False
@@ -341,6 +414,7 @@ def camera_worker():
                                 current_encoder = H264Encoder(bitrate=VIDEO_BITRATE, profile="high")
                                 picam2.start_recording(current_encoder, current_h264_name)
                                 start_audio_recording(current_audio_name)
+
                                 csv_file = open(c_path, 'w', newline='')
                                 csv_writer = csv.writer(csv_file)
                                 csv_writer.writerow(["Timestamp", "Lat", "Lon", "Acc", "Speed"])
@@ -353,6 +427,7 @@ def camera_worker():
                                     })
 
                                 logging.info(f"[CHUNK] ✓ Started chunk {chunk_number}")
+
                     except Exception as chunk_err:
                         logging.error(f"[CHUNK] ✗ Size check failed: {chunk_err}")
 
@@ -364,9 +439,11 @@ def camera_worker():
                         picam2.stop_recording()
                         stop_audio_recording()
                         logging.info(f"[RECORD] ✓ Stopped")
+
                         logging.info(f"[CAMERA] Restarting...")
                         picam2.start()
                         logging.info(f"[CAMERA] ✓ Restarted!")
+
                     except Exception as stop_err:
                         logging.error(f"[RECORD] ✗ Stop error: {stop_err}")
 
@@ -419,6 +496,7 @@ def camera_worker():
                 pass
 
             time.sleep(0.005)
+
         except Exception as e:
             logging.error(f"[CAMERA] Loop error: {e}")
             time.sleep(0.1)
@@ -513,6 +591,7 @@ def capture_photo():
         if latest_frame_jpeg is None:
             return "ERROR"
         data = latest_frame_jpeg
+
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     path = os.path.join(RECORD_FOLDER, f"img_{ts}.jpg")
     nparr = np.frombuffer(data, np.uint8)
@@ -527,6 +606,7 @@ def update_gps():
     global current_gps_data
     if request.json:
         current_gps_data = request.json
+        logging.debug(f"[GPS] Updated: {current_gps_data['lat']:.5f}, {current_gps_data['lon']:.5f}")
     return "OK"
 
 @app.route('/api/status')
@@ -586,7 +666,6 @@ def rename_file():
 
         if not os.path.exists(old_path):
             return jsonify({"success": False, "error": "File not found"})
-
         if os.path.exists(new_path):
             return jsonify({"success": False, "error": "File name already exists"})
 
@@ -602,6 +681,7 @@ def rename_file():
 
         logging.info(f"[RENAME] {old_name} → {new_name}")
         return jsonify({"success": True, "new_name": new_name})
+
     except Exception as e:
         logging.error(f"[RENAME] Error: {e}")
         return jsonify({"success": False, "error": str(e)})
@@ -619,89 +699,91 @@ def rename_batch():
 
         # Sanitize new name
         new_name = new_name.strip().replace(' ', '_')
-        # Remove any file extensions
         new_name = new_name.replace('.mp4', '').replace('.csv', '')
 
         # Find all chunks for this base
         chunks = glob.glob(os.path.join(RECORD_FOLDER, f"{base}_chunk*.mp4"))
         chunks += glob.glob(os.path.join(RECORD_FOLDER, f"{base.replace('video_', 'temp_')}_chunk*.h264"))
+        chunks += glob.glob(os.path.join(RECORD_FOLDER, f"{base.replace('video_', 'incomplete_')}_chunk*.h264"))
 
         if not chunks:
             return jsonify({"success": False, "error": "No chunks found"})
 
         renamed_count = 0
 
-        # Rename each chunk
         for old_path in chunks:
             old_filename = os.path.basename(old_path)
 
-            # Extract chunk number from filename
-            # Example: video_20251228_080000_chunk005.mp4 -> chunk005
             if '_chunk' in old_filename:
-                chunk_part = old_filename.split('_chunk')[1]  # "005.mp4"
-                chunk_num = chunk_part.split('.')[0]  # "005"
-                ext = old_filename.split('.')[-1]  # "mp4" or "h264"
+                chunk_part = old_filename.split('_chunk')[1]
+                chunk_num = chunk_part.split('.')[0]
+                ext = old_filename.split('.')[-1]
 
-                # Create new filename
                 if ext == 'h264':
-                    new_filename = f"temp_{new_name}_chunk{chunk_num}.h264"
+                    if 'incomplete_' in old_filename:
+                        new_filename = f"incomplete_{new_name}_chunk{chunk_num}.h264"
+                    else:
+                        new_filename = f"temp_{new_name}_chunk{chunk_num}.h264"
                 else:
                     new_filename = f"video_{new_name}_chunk{chunk_num}.mp4"
 
                 new_path = os.path.join(RECORD_FOLDER, new_filename)
 
-                # Check if new name exists
                 if os.path.exists(new_path):
                     return jsonify({"success": False, "error": f"File {new_filename} already exists"})
 
-                # Rename video/h264 file
                 os.rename(old_path, new_path)
                 renamed_count += 1
 
-                # Also rename corresponding GPS CSV file
+                # Also rename GPS CSV
                 if ext == 'mp4':
                     old_csv_filename = old_filename.replace('video_', 'gps_').replace('.mp4', '.csv')
                     new_csv_filename = new_filename.replace('video_', 'gps_').replace('.mp4', '.csv')
-                    old_csv_path = os.path.join(RECORD_FOLDER, old_csv_filename)
-                    new_csv_path = os.path.join(RECORD_FOLDER, new_csv_filename)
-
-                    if os.path.exists(old_csv_path):
-                        os.rename(old_csv_path, new_csv_path)
                 elif ext == 'h264':
-                    # Also rename temp GPS files
-                    old_csv_filename = old_filename.replace('temp_', 'gps_').replace('.h264', '.csv')
-                    new_csv_filename = new_filename.replace('temp_', 'gps_').replace('.h264', '.csv')
-                    old_csv_path = os.path.join(RECORD_FOLDER, old_csv_filename)
-                    new_csv_path = os.path.join(RECORD_FOLDER, new_csv_filename)
+                    if 'incomplete_' in old_filename:
+                        old_csv_filename = old_filename.replace('incomplete_', 'incomplete_gps_').replace('.h264', '.csv')
+                        new_csv_filename = new_filename.replace('incomplete_', 'incomplete_gps_').replace('.h264', '.csv')
+                    else:
+                        old_csv_filename = old_filename.replace('temp_', 'gps_').replace('.h264', '.csv')
+                        new_csv_filename = new_filename.replace('temp_', 'gps_').replace('.h264', '.csv')
 
-                    if os.path.exists(old_csv_path):
-                        os.rename(old_csv_path, new_csv_path)
+                old_csv_path = os.path.join(RECORD_FOLDER, old_csv_filename)
+                new_csv_path = os.path.join(RECORD_FOLDER, new_csv_filename)
+                if os.path.exists(old_csv_path):
+                    os.rename(old_csv_path, new_csv_path)
 
-                # Also rename audio files if they exist
-                old_audio_filename = old_filename.replace('video_', 'audio_').replace('temp_', 'audio_').replace('.mp4', '.wav').replace('.h264', '.wav')
-                new_audio_filename = new_filename.replace('video_', 'audio_').replace('temp_', 'audio_').replace('.mp4', '.wav').replace('.h264', '.wav')
+                # Also rename audio
+                if 'incomplete_' in old_filename:
+                    old_audio_filename = old_filename.replace('incomplete_', 'incomplete_audio_').replace('.h264', '.wav').replace('.mp4', '.wav')
+                    new_audio_filename = new_filename.replace('incomplete_', 'incomplete_audio_').replace('.h264', '.wav').replace('.mp4', '.wav')
+                else:
+                    old_audio_filename = old_filename.replace('video_', 'audio_').replace('temp_', 'audio_').replace('.mp4', '.wav').replace('.h264', '.wav')
+                    new_audio_filename = new_filename.replace('video_', 'audio_').replace('temp_', 'audio_').replace('.mp4', '.wav').replace('.h264', '.wav')
+
                 old_audio_path = os.path.join(RECORD_FOLDER, old_audio_filename)
                 new_audio_path = os.path.join(RECORD_FOLDER, new_audio_filename)
-
                 if os.path.exists(old_audio_path):
                     os.rename(old_audio_path, new_audio_path)
 
         logging.info(f"[BATCH RENAME] {base} → {new_name} ({renamed_count} files)")
         return jsonify({"success": True, "renamed_count": renamed_count, "new_base": f"video_{new_name}"})
+
     except Exception as e:
         logging.error(f"[BATCH RENAME] Error: {e}")
         return jsonify({"success": False, "error": str(e)})
 
 @app.route('/api/list_media')
 def list_media():
-    """List media with batch grouping for chunks and converting status"""
+    """List media with batch grouping for chunks, converting status, and incomplete files"""
     v = glob.glob(os.path.join(RECORD_FOLDER, "video_*.mp4"))
     v += glob.glob(os.path.join(RECORD_FOLDER, "failed_upload_*.mp4"))
     v += glob.glob(os.path.join(RECORD_FOLDER, "uploaded_*.mp4"))
     temp = glob.glob(os.path.join(RECORD_FOLDER, "temp_*.h264"))
+    incomplete = glob.glob(os.path.join(RECORD_FOLDER, "incomplete_*.h264"))
     i = glob.glob(os.path.join(RECORD_FOLDER, "img_*.jpg"))
 
-    files = sorted(v + i + temp, key=os.path.getmtime, reverse=True)
+    files = sorted(v + i + temp + incomplete, key=os.path.getmtime, reverse=True)
+
     groups = {}
     standalone = []
 
@@ -714,10 +796,11 @@ def list_media():
 
         is_failed = n.startswith('failed_upload_')
         is_converting_h264 = n.startswith('temp_') and n.endswith('.h264')
+        is_incomplete = n.startswith('incomplete_') and n.endswith('.h264')
         is_uploaded = n.startswith('uploaded_')
-        is_video = ("video" in n or "failed" in n or "temp" in n or "uploaded" in n)
+        is_video = ("video" in n or "failed" in n or "temp" in n or "uploaded" in n or "incomplete" in n)
 
-        mp4_name = n.replace('temp_', 'video_').replace('.h264', '.mp4')
+        mp4_name = n.replace('temp_', 'video_').replace('incomplete_', 'video_').replace('.h264', '.mp4')
         is_converting_mp4 = False
         with converting_files_lock:
             is_converting_mp4 = mp4_name in converting_files
@@ -733,6 +816,7 @@ def list_media():
             "size": s,
             "failed": is_failed,
             "converting": is_converting_h264 or is_converting_mp4,
+            "incomplete": is_incomplete,
             "uploaded": is_uploaded,
             "upload_status": upload_info
         }
@@ -750,7 +834,8 @@ def list_media():
                         "type": "batch",
                         "uploaded_count": 0,
                         "failed_count": 0,
-                        "converting_count": 0
+                        "converting_count": 0,
+                        "incomplete_count": 0
                     }
 
                 groups[base]["chunks"].append(file_obj)
@@ -762,6 +847,8 @@ def list_media():
                     groups[base]["failed_count"] += 1
                 if is_converting_h264 or is_converting_mp4:
                     groups[base]["converting_count"] += 1
+                if is_incomplete:
+                    groups[base]["incomplete_count"] += 1
         else:
             standalone.append(file_obj)
 
@@ -806,6 +893,7 @@ def get_gps_data(filename):
             "start": gps_points[0] if gps_points else None,
             "end": gps_points[-1] if gps_points else None
         })
+
     except Exception as e:
         return jsonify({"error": str(e)})
 
@@ -814,7 +902,6 @@ def api_upload_cloud():
     try:
         data = request.json
         filename = data.get('filename')
-
         if not filename:
             return jsonify({"success": False, "error": "No filename"})
 
@@ -829,7 +916,6 @@ def api_upload_cloud():
 
         def upload_thread():
             success, message = upload_to_cloud(video_path, csv_path, DEVICE_ID)
-
             with upload_status_lock:
                 if success:
                     upload_status[filename] = {"status": "success", "message": message}
@@ -852,6 +938,7 @@ def api_upload_cloud():
         t.start()
 
         return jsonify({"success": True, "message": "Upload started"})
+
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
@@ -861,7 +948,6 @@ def batch_upload():
     try:
         data = request.json
         base = data.get('base')
-
         if not base:
             return jsonify({"success": False, "error": "No base provided"})
 
@@ -894,6 +980,7 @@ def batch_upload():
         t.start()
 
         return jsonify({"success": True, "message": f"Batch upload started for {len(chunks)} chunks"})
+
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
@@ -912,10 +999,12 @@ def delete_file():
         csv_name = csv_name.replace("failed_upload_", "failed_upload_gps_")
         csv_name = csv_name.replace("uploaded_", "uploaded_gps_")
         csv_name = csv_name.replace("temp_", "gps_")
+        csv_name = csv_name.replace("incomplete_", "incomplete_gps_")
         csv_name = csv_name.replace(".mp4", ".csv").replace(".jpg", ".csv").replace(".h264", ".csv")
         csv_path = os.path.join(RECORD_FOLDER, csv_name)
         if os.path.exists(csv_path):
             os.remove(csv_path)
+
         return "OK"
     return "ERROR"
 
@@ -925,18 +1014,22 @@ def delete_batch():
     try:
         data = request.json
         base = data.get('base')
-
         if not base:
             return jsonify({"success": False, "error": "No base"})
 
         chunks = glob.glob(os.path.join(RECORD_FOLDER, f"{base}_chunk*.mp4"))
+        chunks += glob.glob(os.path.join(RECORD_FOLDER, f"{base.replace('video_', 'temp_')}_chunk*.h264"))
+        chunks += glob.glob(os.path.join(RECORD_FOLDER, f"{base.replace('video_', 'incomplete_')}_chunk*.h264"))
+
         csvs = glob.glob(os.path.join(RECORD_FOLDER, f"gps_{base.replace('video_', '')}_chunk*.csv"))
+        csvs += glob.glob(os.path.join(RECORD_FOLDER, f"incomplete_gps_{base.replace('video_', '')}_chunk*.csv"))
 
         for f in chunks + csvs:
             if os.path.exists(f) and RECORD_FOLDER in os.path.abspath(f):
                 os.remove(f)
 
         return jsonify({"success": True, "message": f"Deleted {len(chunks)} chunks"})
+
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
@@ -962,9 +1055,13 @@ if __name__ == '__main__':
     print(f"  Audio: USB Mic ({USB_MIC_DEVICE}) @ {AUDIO_SAMPLE_RATE}Hz")
     if AUTO_CHUNK_ENABLED:
         print(f"  Auto-Chunk: At {CHUNK_SIZE_MB} MB (~6 min per chunk)")
-    print(f"  NEW: Batch rename for video sessions!")
+    print(f"  NEW: GPS tracking from browser!")
+    print(f"  NEW: Orphaned file recovery on startup!")
     print(f"  Upload URL: https://centrix.co.in/v_api/upload")
     print("=" * 70)
+
+    # RECOVER ORPHANED FILES FIRST
+    recover_orphaned_files()
 
     ssl_available = generate_ssl_certificates()
 
