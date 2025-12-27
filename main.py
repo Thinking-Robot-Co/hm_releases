@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
+
 """
-Smart Helmet Camera System v27.9-REALTIME
-- Real-time recording card display
-- Live recording status updates
-- Improved UI feedback
+Smart Helmet Camera System v27.10-BATCH-RENAME
+- Added batch rename for video session chunks
+- Renames all chunks in a session with user-provided name
 """
+
 import time
 import os
 import csv
@@ -18,7 +19,6 @@ import logging
 import cv2
 import numpy as np
 import subprocess
-
 from flask import Flask, Response, render_template, request, jsonify, send_from_directory
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
@@ -28,15 +28,13 @@ from libcamera import Transform
 from uploader import upload_to_cloud
 
 # --- CONFIGURATION ---
-VERSION = "v27.9-REALTIME"
+VERSION = "v27.10-BATCH-RENAME"
 RECORD_FOLDER = "recordings"
 PORT = 5001
-
 CAM_WIDTH, CAM_HEIGHT = 1640, 1232
 FPS = 30.0
 STREAM_HEIGHT = 480
-
-VIDEO_BITRATE = 1500000  # 1.5 Mbps
+VIDEO_BITRATE = 1500000
 
 # AUTO-CHUNKING
 AUTO_CHUNK_ENABLED = True
@@ -48,7 +46,6 @@ AUDIO_ENABLED_DEFAULT = True
 AUDIO_SAMPLE_RATE = 44100
 AUDIO_CHANNELS = 1
 USB_MIC_DEVICE = "hw:3,0"
-
 DEVICE_ID = "smart_hm_02"
 
 # Discovery
@@ -80,27 +77,20 @@ frame_lock = threading.Lock()
 frame_condition = threading.Condition(frame_lock)
 latest_frame_jpeg = None
 current_gps_data = {"lat": 0.0, "lon": 0.0, "accuracy": 0.0, "speed": 0.0}
-
 app_running = True
-req_start_rec = False 
-req_stop_rec = False 
-is_recording_active = False 
-
+req_start_rec = False
+req_stop_rec = False
+is_recording_active = False
 recording_start_time = None
-
 audio_enabled = AUDIO_ENABLED_DEFAULT
 audio_process = None
-
 upload_status = {}
 upload_status_lock = threading.Lock()
-
 chunk_number = 0
 last_chunk_check = 0
-
-# REAL-TIME RECORDING STATE
-current_recording_files = []  # List of currently recording files
+current_recording_files = []
 current_recording_lock = threading.Lock()
-converting_files = set()  # Set of files being converted
+converting_files = set()
 converting_files_lock = threading.Lock()
 
 # ==========================================
@@ -109,7 +99,7 @@ converting_files_lock = threading.Lock()
 def generate_ssl_certificates():
     """Generate self-signed SSL certificates if they don't exist"""
     if os.path.exists('cert.pem') and os.path.exists('key.pem'):
-        logging.info("[SSL] âœ“ Certificates already exist")
+        logging.info("[SSL] ✓ Certificates already exist")
         return True
 
     logging.info("[SSL] Generating self-signed certificates...")
@@ -121,17 +111,16 @@ def generate_ssl_certificates():
             '-subj', '/C=IN/ST=Maharashtra/L=Nagpur/O=ThinkingRobot/OU=SmartHelmet/CN=raspberrypi'
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
-
         if result.returncode == 0 and os.path.exists('cert.pem') and os.path.exists('key.pem'):
             os.chmod('key.pem', 0o600)
             os.chmod('cert.pem', 0o600)
-            logging.info("[SSL] âœ“ Certificates generated successfully")
+            logging.info("[SSL] ✓ Certificates generated successfully")
             return True
         else:
-            logging.warning(f"[SSL] âœ— Certificate generation failed: {result.stderr}")
+            logging.warning(f"[SSL] ✗ Certificate generation failed: {result.stderr}")
             return False
     except Exception as e:
-        logging.warning(f"[SSL] âœ— Could not generate certificates: {e}")
+        logging.warning(f"[SSL] ✗ Could not generate certificates: {e}")
         return False
 
 # ==========================================
@@ -140,7 +129,6 @@ def generate_ssl_certificates():
 def start_audio_recording(audio_file):
     """Start audio recording using arecord"""
     global audio_process
-
     if not audio_enabled:
         logging.info("[AUDIO] Audio disabled by user")
         return None
@@ -148,7 +136,6 @@ def start_audio_recording(audio_file):
     try:
         check_cmd = ["arecord", "-l"]
         result = subprocess.run(check_cmd, capture_output=True, text=True)
-
         if f"card {USB_MIC_DEVICE.split(':')[1].split(',')[0]}" not in result.stdout:
             logging.warning(f"[AUDIO] USB microphone not found at {USB_MIC_DEVICE}, skipping audio")
             return None
@@ -161,11 +148,9 @@ def start_audio_recording(audio_file):
             "-r", str(AUDIO_SAMPLE_RATE),
             audio_file
         ]
-
         audio_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         logging.info(f"[AUDIO] Started recording to {audio_file}")
         return audio_process
-
     except Exception as e:
         logging.error(f"[AUDIO] Failed to start: {e}")
         return None
@@ -173,7 +158,6 @@ def start_audio_recording(audio_file):
 def stop_audio_recording():
     """Stop audio recording"""
     global audio_process
-
     if audio_process:
         try:
             audio_process.terminate()
@@ -196,15 +180,12 @@ def convert_and_merge(h264_path, audio_path, mp4_path):
     h264_name = os.path.basename(h264_path)
     mp4_name = os.path.basename(mp4_path)
 
-    # Mark as converting
     with converting_files_lock:
         converting_files.add(mp4_name)
 
     time.sleep(2.0)
-
     try:
         logging.info(f"[CONVERT] Starting: {h264_path}")
-
         has_audio = os.path.exists(audio_path) and os.path.getsize(audio_path) > 1000
 
         if has_audio:
@@ -238,14 +219,12 @@ def convert_and_merge(h264_path, audio_path, mp4_path):
             os.remove(h264_path)
             if has_audio:
                 os.remove(audio_path)
-            logging.info(f"[CONVERT] âœ“ Success: {mp4_path}")
+            logging.info(f"[CONVERT] ✓ Success: {mp4_path}")
         else:
-            logging.error("[CONVERT] âœ— Failed")
-
+            logging.error("[CONVERT] ✗ Failed")
     except Exception as e:
-        logging.error(f"[CONVERT] âœ— Error: {e}")
+        logging.error(f"[CONVERT] ✗ Error: {e}")
     finally:
-        # Remove from converting
         with converting_files_lock:
             converting_files.discard(mp4_name)
 
@@ -259,7 +238,6 @@ def camera_worker():
     global current_recording_files
 
     logging.info(f"[CAMERA] Thread started")
-
     csv_file = None
     csv_writer = None
     last_gps_time = 0
@@ -272,29 +250,23 @@ def camera_worker():
     try:
         logging.info(f"[CAMERA] Initializing Picamera2...")
         picam2 = Picamera2()
-
         config = picam2.create_video_configuration(
             main={"size": (CAM_WIDTH, CAM_HEIGHT), "format": "YUV420"},
-            lores={"size": (640, 480), "format": "YUV420"}, 
+            lores={"size": (640, 480), "format": "YUV420"},
             transform=Transform(hflip=True, vflip=True),
             controls={"FrameRate": FPS},
-            buffer_count=6 
+            buffer_count=6
         )
         config["sensor"]["output_size"] = (CAM_WIDTH, CAM_HEIGHT)
-
         logging.info(f"[CAMERA] Configuring...")
         picam2.configure(config)
-
         logging.info(f"[CAMERA] Starting camera...")
         picam2.start()
-
         picam2.set_controls({"ScalerCrop": (0, 0, 3280, 2464)})
-
-        logging.info(f"[CAMERA] âœ“ Ready!")
+        logging.info(f"[CAMERA] ✓ Ready!")
         time.sleep(0.5)
-
     except Exception as e:
-        logging.critical(f"[CAMERA] âœ— Hardware Error: {e}")
+        logging.critical(f"[CAMERA] ✗ Hardware Error: {e}")
         return
 
     while app_running:
@@ -306,8 +278,8 @@ def camera_worker():
                     recording_session_start = datetime.datetime.now()
                     recording_start_time = time.time()
                     last_chunk_check = time.time()
-
                     ts = recording_session_start.strftime("%Y%m%d_%H%M%S")
+
                     current_h264_name = os.path.join(RECORD_FOLDER, f"temp_{ts}_chunk{chunk_number:03d}.h264")
                     current_audio_name = os.path.join(RECORD_FOLDER, f"audio_{ts}_chunk{chunk_number:03d}.wav")
                     current_mp4_name = os.path.join(RECORD_FOLDER, f"video_{ts}_chunk{chunk_number:03d}.mp4")
@@ -316,19 +288,14 @@ def camera_worker():
                     try:
                         logging.info(f"[RECORD] Creating encoder...")
                         current_encoder = H264Encoder(bitrate=VIDEO_BITRATE, profile="high")
-
                         logging.info(f"[RECORD] Starting video chunk {chunk_number}: {current_h264_name}")
                         picam2.start_recording(current_encoder, current_h264_name)
-
                         start_audio_recording(current_audio_name)
-
                         csv_file = open(c_path, 'w', newline='')
                         csv_writer = csv.writer(csv_file)
                         csv_writer.writerow(["Timestamp", "Lat", "Lon", "Acc", "Speed"])
-
                         is_recording_active = True
 
-                        # Add to current recording files
                         with current_recording_lock:
                             current_recording_files.append({
                                 "h264": os.path.basename(current_h264_name),
@@ -336,42 +303,35 @@ def camera_worker():
                                 "started": recording_session_start.strftime("%Y-%m-%d %H:%M:%S")
                             })
 
-                        logging.info(f"[RECORD] âœ“ STARTED (Audio: {audio_enabled})")
-
+                        logging.info(f"[RECORD] ✓ STARTED (Audio: {audio_enabled})")
                     except Exception as rec_err:
-                        logging.error(f"[RECORD] âœ— Start failed: {rec_err}")
+                        logging.error(f"[RECORD] ✗ Start failed: {rec_err}")
                         is_recording_active = False
 
             if is_recording_active and AUTO_CHUNK_ENABLED:
                 now = time.time()
-
                 if (now - last_chunk_check) >= CHUNK_CHECK_INTERVAL:
                     last_chunk_check = now
-
                     try:
                         if os.path.exists(current_h264_name):
                             file_size_mb = os.path.getsize(current_h264_name) / (1024 * 1024)
-
                             if file_size_mb >= CHUNK_SIZE_MB:
                                 logging.info(f"[CHUNK] Rotating chunk {chunk_number} at {file_size_mb:.1f} MB")
-
                                 picam2.stop_recording()
                                 stop_audio_recording()
-
                                 if csv_file:
                                     csv_file.close()
                                     csv_file = None
 
                                 if current_h264_name and current_mp4_name:
                                     t = threading.Thread(
-                                        target=convert_and_merge, 
+                                        target=convert_and_merge,
                                         args=(current_h264_name, current_audio_name, current_mp4_name)
                                     )
                                     t.daemon = True
                                     t.start()
 
                                 chunk_number += 1
-
                                 ts = recording_session_start.strftime("%Y%m%d_%H%M%S")
                                 current_h264_name = os.path.join(RECORD_FOLDER, f"temp_{ts}_chunk{chunk_number:03d}.h264")
                                 current_audio_name = os.path.join(RECORD_FOLDER, f"audio_{ts}_chunk{chunk_number:03d}.wav")
@@ -381,12 +341,10 @@ def camera_worker():
                                 current_encoder = H264Encoder(bitrate=VIDEO_BITRATE, profile="high")
                                 picam2.start_recording(current_encoder, current_h264_name)
                                 start_audio_recording(current_audio_name)
-
                                 csv_file = open(c_path, 'w', newline='')
                                 csv_writer = csv.writer(csv_file)
                                 csv_writer.writerow(["Timestamp", "Lat", "Lon", "Acc", "Speed"])
 
-                                # Add new chunk to current recording files
                                 with current_recording_lock:
                                     current_recording_files.append({
                                         "h264": os.path.basename(current_h264_name),
@@ -394,10 +352,9 @@ def camera_worker():
                                         "started": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                     })
 
-                                logging.info(f"[CHUNK] âœ“ Started chunk {chunk_number}")
-
+                                logging.info(f"[CHUNK] ✓ Started chunk {chunk_number}")
                     except Exception as chunk_err:
-                        logging.error(f"[CHUNK] âœ— Size check failed: {chunk_err}")
+                        logging.error(f"[CHUNK] ✗ Size check failed: {chunk_err}")
 
             if req_stop_rec:
                 req_stop_rec = False
@@ -406,24 +363,20 @@ def camera_worker():
                         logging.info(f"[RECORD] Stopping (total chunks: {chunk_number + 1})...")
                         picam2.stop_recording()
                         stop_audio_recording()
-                        logging.info(f"[RECORD] âœ“ Stopped")
-
+                        logging.info(f"[RECORD] ✓ Stopped")
                         logging.info(f"[CAMERA] Restarting...")
                         picam2.start()
-                        logging.info(f"[CAMERA] âœ“ Restarted!")
-
+                        logging.info(f"[CAMERA] ✓ Restarted!")
                     except Exception as stop_err:
-                        logging.error(f"[RECORD] âœ— Stop error: {stop_err}")
+                        logging.error(f"[RECORD] ✗ Stop error: {stop_err}")
 
                     is_recording_active = False
                     recording_start_time = None
-
-                    if csv_file: 
+                    if csv_file:
                         csv_file.close()
-                    csv_file = None
+                        csv_file = None
                     current_encoder = None
 
-                    # Clear current recording files
                     with current_recording_lock:
                         current_recording_files = []
 
@@ -431,14 +384,14 @@ def camera_worker():
 
                     if current_h264_name and current_mp4_name:
                         t = threading.Thread(
-                            target=convert_and_merge, 
+                            target=convert_and_merge,
                             args=(current_h264_name, current_audio_name, current_mp4_name)
                         )
                         t.daemon = True
                         t.start()
                         logging.info(f"[RECORD] Conversion started")
 
-                    time.sleep(0.05)
+            time.sleep(0.05)
 
             try:
                 raw_yuv = picam2.capture_array("lores")
@@ -462,18 +415,16 @@ def camera_worker():
                         with frame_lock:
                             latest_frame_jpeg = buf.tobytes()
                             frame_condition.notify_all()
-
             except Exception:
                 pass
 
             time.sleep(0.005)
-
         except Exception as e:
             logging.error(f"[CAMERA] Loop error: {e}")
             time.sleep(0.1)
 
     logging.info("[CAMERA] Shutting down...")
-    if picam2: 
+    if picam2:
         try:
             if is_recording_active:
                 logging.info("[CAMERA] Stopping active recording...")
@@ -483,7 +434,7 @@ def camera_worker():
             pass
         logging.info("[CAMERA] Stopping camera...")
         picam2.stop()
-        logging.info("[CAMERA] âœ“ Stopped")
+        logging.info("[CAMERA] ✓ Stopped")
 
 # ==========================================
 # DISCOVERY SERVICE
@@ -496,15 +447,16 @@ def discovery_service():
         sock.bind(('', DISCOVERY_PORT))
         reply = f"{RESPONSE_PREFIX}|{socket.gethostname()}".encode('utf-8')
         logging.info(f"[DISCOVERY] Started on port {DISCOVERY_PORT}")
+
         while app_running:
             try:
                 sock.settimeout(1.0)
                 data, addr = sock.recvfrom(1024)
                 if data.decode().strip() == MAGIC_WORD:
                     sock.sendto(reply, addr)
-            except socket.timeout: 
+            except socket.timeout:
                 continue
-            except Exception: 
+            except Exception:
                 time.sleep(1)
     except Exception as e:
         logging.error(f"[DISCOVERY] Error: {e}")
@@ -512,7 +464,6 @@ def discovery_service():
 # ==========================================
 # FLASK ROUTES
 # ==========================================
-
 @app.route('/')
 def index():
     return render_template('index.html', version=VERSION)
@@ -529,7 +480,7 @@ def video_feed():
                 try:
                     yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
                 except Exception:
-                    break 
+                    break
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/api/start_record')
@@ -551,17 +502,15 @@ def stop_record():
 def toggle_audio():
     """Toggle audio recording on/off"""
     global audio_enabled
-
     data = request.json
     audio_enabled = data.get('enabled', True)
-
     logging.info(f"[AUDIO] Toggled: {audio_enabled}")
     return jsonify({"success": True, "audio_enabled": audio_enabled})
 
 @app.route('/api/capture_photo')
 def capture_photo():
     with frame_lock:
-        if latest_frame_jpeg is None: 
+        if latest_frame_jpeg is None:
             return "ERROR"
         data = latest_frame_jpeg
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -576,7 +525,7 @@ def capture_photo():
 @app.route('/api/update_gps', methods=['POST'])
 def update_gps():
     global current_gps_data
-    if request.json: 
+    if request.json:
         current_gps_data = request.json
     return "OK"
 
@@ -584,16 +533,15 @@ def update_gps():
 def get_status():
     """Get system status with recording timer, audio state, and current recording files"""
     space = 0
-    try: 
+    try:
         space = round(shutil.disk_usage(RECORD_FOLDER).free / (2**30), 2)
-    except: 
+    except:
         pass
 
     recording_time = 0
     if is_recording_active and recording_start_time:
         recording_time = int(time.time() - recording_start_time)
 
-    # Get current recording files with their sizes
     current_files = []
     with current_recording_lock:
         for rec_file in current_recording_files:
@@ -619,7 +567,7 @@ def get_status():
 
 @app.route('/api/rename_file', methods=['POST'])
 def rename_file():
-    """Rename a video file"""
+    """Rename a single video file"""
     try:
         data = request.json
         old_name = data.get('old_name')
@@ -628,29 +576,22 @@ def rename_file():
         if not old_name or not new_name:
             return jsonify({"success": False, "error": "Missing parameters"})
 
-        # Sanitize new name
         new_name = new_name.strip()
         if not new_name.endswith('.mp4'):
             new_name += '.mp4'
-
-        # Remove any path separators
         new_name = os.path.basename(new_name)
 
         old_path = os.path.join(RECORD_FOLDER, old_name)
         new_path = os.path.join(RECORD_FOLDER, new_name)
 
-        # Check if file exists
         if not os.path.exists(old_path):
             return jsonify({"success": False, "error": "File not found"})
 
-        # Check if new name already exists
         if os.path.exists(new_path):
             return jsonify({"success": False, "error": "File name already exists"})
 
-        # Rename video file
         os.rename(old_path, new_path)
 
-        # Also rename GPS file if exists
         old_csv = old_name.replace('video_', 'gps_').replace('.mp4', '.csv')
         new_csv = new_name.replace('video_', 'gps_').replace('.mp4', '.csv')
         old_csv_path = os.path.join(RECORD_FOLDER, old_csv)
@@ -659,11 +600,96 @@ def rename_file():
         if os.path.exists(old_csv_path):
             os.rename(old_csv_path, new_csv_path)
 
-        logging.info(f"[RENAME] {old_name} â†’ {new_name}")
+        logging.info(f"[RENAME] {old_name} → {new_name}")
         return jsonify({"success": True, "new_name": new_name})
-
     except Exception as e:
         logging.error(f"[RENAME] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+@app.route('/api/rename_batch', methods=['POST'])
+def rename_batch():
+    """Rename all chunks in a batch/video session"""
+    try:
+        data = request.json
+        base = data.get('base')  # e.g., "video_20251228_080000"
+        new_name = data.get('new_name')  # e.g., "morning_delivery"
+
+        if not base or not new_name:
+            return jsonify({"success": False, "error": "Missing parameters"})
+
+        # Sanitize new name
+        new_name = new_name.strip().replace(' ', '_')
+        # Remove any file extensions
+        new_name = new_name.replace('.mp4', '').replace('.csv', '')
+
+        # Find all chunks for this base
+        chunks = glob.glob(os.path.join(RECORD_FOLDER, f"{base}_chunk*.mp4"))
+        chunks += glob.glob(os.path.join(RECORD_FOLDER, f"{base.replace('video_', 'temp_')}_chunk*.h264"))
+
+        if not chunks:
+            return jsonify({"success": False, "error": "No chunks found"})
+
+        renamed_count = 0
+
+        # Rename each chunk
+        for old_path in chunks:
+            old_filename = os.path.basename(old_path)
+
+            # Extract chunk number from filename
+            # Example: video_20251228_080000_chunk005.mp4 -> chunk005
+            if '_chunk' in old_filename:
+                chunk_part = old_filename.split('_chunk')[1]  # "005.mp4"
+                chunk_num = chunk_part.split('.')[0]  # "005"
+                ext = old_filename.split('.')[-1]  # "mp4" or "h264"
+
+                # Create new filename
+                if ext == 'h264':
+                    new_filename = f"temp_{new_name}_chunk{chunk_num}.h264"
+                else:
+                    new_filename = f"video_{new_name}_chunk{chunk_num}.mp4"
+
+                new_path = os.path.join(RECORD_FOLDER, new_filename)
+
+                # Check if new name exists
+                if os.path.exists(new_path):
+                    return jsonify({"success": False, "error": f"File {new_filename} already exists"})
+
+                # Rename video/h264 file
+                os.rename(old_path, new_path)
+                renamed_count += 1
+
+                # Also rename corresponding GPS CSV file
+                if ext == 'mp4':
+                    old_csv_filename = old_filename.replace('video_', 'gps_').replace('.mp4', '.csv')
+                    new_csv_filename = new_filename.replace('video_', 'gps_').replace('.mp4', '.csv')
+                    old_csv_path = os.path.join(RECORD_FOLDER, old_csv_filename)
+                    new_csv_path = os.path.join(RECORD_FOLDER, new_csv_filename)
+
+                    if os.path.exists(old_csv_path):
+                        os.rename(old_csv_path, new_csv_path)
+                elif ext == 'h264':
+                    # Also rename temp GPS files
+                    old_csv_filename = old_filename.replace('temp_', 'gps_').replace('.h264', '.csv')
+                    new_csv_filename = new_filename.replace('temp_', 'gps_').replace('.h264', '.csv')
+                    old_csv_path = os.path.join(RECORD_FOLDER, old_csv_filename)
+                    new_csv_path = os.path.join(RECORD_FOLDER, new_csv_filename)
+
+                    if os.path.exists(old_csv_path):
+                        os.rename(old_csv_path, new_csv_path)
+
+                # Also rename audio files if they exist
+                old_audio_filename = old_filename.replace('video_', 'audio_').replace('temp_', 'audio_').replace('.mp4', '.wav').replace('.h264', '.wav')
+                new_audio_filename = new_filename.replace('video_', 'audio_').replace('temp_', 'audio_').replace('.mp4', '.wav').replace('.h264', '.wav')
+                old_audio_path = os.path.join(RECORD_FOLDER, old_audio_filename)
+                new_audio_path = os.path.join(RECORD_FOLDER, new_audio_filename)
+
+                if os.path.exists(old_audio_path):
+                    os.rename(old_audio_path, new_audio_path)
+
+        logging.info(f"[BATCH RENAME] {base} → {new_name} ({renamed_count} files)")
+        return jsonify({"success": True, "renamed_count": renamed_count, "new_base": f"video_{new_name}"})
+    except Exception as e:
+        logging.error(f"[BATCH RENAME] Error: {e}")
         return jsonify({"success": False, "error": str(e)})
 
 @app.route('/api/list_media')
@@ -676,15 +702,14 @@ def list_media():
     i = glob.glob(os.path.join(RECORD_FOLDER, "img_*.jpg"))
 
     files = sorted(v + i + temp, key=os.path.getmtime, reverse=True)
-
     groups = {}
     standalone = []
 
     for f in files:
         n = os.path.basename(f)
-        try: 
+        try:
             s = round(os.path.getsize(f)/(1024*1024), 2)
-        except: 
+        except:
             s = 0
 
         is_failed = n.startswith('failed_upload_')
@@ -692,7 +717,6 @@ def list_media():
         is_uploaded = n.startswith('uploaded_')
         is_video = ("video" in n or "failed" in n or "temp" in n or "uploaded" in n)
 
-        # Check if MP4 is being converted
         mp4_name = n.replace('temp_', 'video_').replace('.h264', '.mp4')
         is_converting_mp4 = False
         with converting_files_lock:
@@ -704,8 +728,8 @@ def list_media():
                 upload_info = upload_status[n]
 
         file_obj = {
-            "name": n, 
-            "type": "video" if is_video else "image", 
+            "name": n,
+            "type": "video" if is_video else "image",
             "size": s,
             "failed": is_failed,
             "converting": is_converting_h264 or is_converting_mp4,
@@ -728,6 +752,7 @@ def list_media():
                         "failed_count": 0,
                         "converting_count": 0
                     }
+
                 groups[base]["chunks"].append(file_obj)
                 groups[base]["total_size"] += s
                 groups[base]["chunk_count"] += 1
@@ -789,6 +814,7 @@ def api_upload_cloud():
     try:
         data = request.json
         filename = data.get('filename')
+
         if not filename:
             return jsonify({"success": False, "error": "No filename"})
 
@@ -835,6 +861,7 @@ def batch_upload():
     try:
         data = request.json
         base = data.get('base')
+
         if not base:
             return jsonify({"success": False, "error": "No base provided"})
 
@@ -870,7 +897,7 @@ def batch_upload():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
-@app.route('/api/download/<path:filename>')
+@app.route('/api/download/<filename>')
 def download(filename):
     return send_from_directory(RECORD_FOLDER, filename, as_attachment=True)
 
@@ -880,13 +907,14 @@ def delete_file():
     p = os.path.join(RECORD_FOLDER, n)
     if os.path.exists(p) and RECORD_FOLDER in os.path.abspath(p):
         os.remove(p)
+
         csv_name = n.replace("video_", "gps_").replace("img_", "gps_")
         csv_name = csv_name.replace("failed_upload_", "failed_upload_gps_")
         csv_name = csv_name.replace("uploaded_", "uploaded_gps_")
         csv_name = csv_name.replace("temp_", "gps_")
         csv_name = csv_name.replace(".mp4", ".csv").replace(".jpg", ".csv").replace(".h264", ".csv")
         csv_path = os.path.join(RECORD_FOLDER, csv_name)
-        if os.path.exists(csv_path): 
+        if os.path.exists(csv_path):
             os.remove(csv_path)
         return "OK"
     return "ERROR"
@@ -897,6 +925,7 @@ def delete_batch():
     try:
         data = request.json
         base = data.get('base')
+
         if not base:
             return jsonify({"success": False, "error": "No base"})
 
@@ -911,7 +940,7 @@ def delete_batch():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
-@app.route('/data/<path:filename>')
+@app.route('/data/<filename>')
 def serve(filename):
     return send_from_directory(RECORD_FOLDER, filename)
 
@@ -928,12 +957,12 @@ if __name__ == '__main__':
     print(f"  Port: {PORT}")
     print(f"  Device ID: {DEVICE_ID}")
     print(f"  Recording: {RECORD_FOLDER}")
-    print(f"  Resolution: {CAM_WIDTH}x{CAM_HEIGHT} (FULL - no cropping!)")
+    print(f"  Resolution: {CAM_WIDTH}x{CAM_HEIGHT}")
     print(f"  Video Bitrate: {VIDEO_BITRATE/1000000} Mbps")
     print(f"  Audio: USB Mic ({USB_MIC_DEVICE}) @ {AUDIO_SAMPLE_RATE}Hz")
     if AUTO_CHUNK_ENABLED:
         print(f"  Auto-Chunk: At {CHUNK_SIZE_MB} MB (~6 min per chunk)")
-        print(f"  Real-time: Recording cards show IMMEDIATELY")
+    print(f"  NEW: Batch rename for video sessions!")
     print(f"  Upload URL: https://centrix.co.in/v_api/upload")
     print("=" * 70)
 
@@ -944,7 +973,6 @@ if __name__ == '__main__':
     threading.Thread(target=camera_worker, daemon=True).start()
 
     logging.info(f"[MAIN] Starting Flask on port {PORT}...")
-
     try:
         if ssl_available:
             app.run(host='0.0.0.0', port=PORT, ssl_context=('cert.pem', 'key.pem'), debug=False, threaded=True)
@@ -957,4 +985,4 @@ if __name__ == '__main__':
         app_running = False
         stop_audio_recording()
         time.sleep(1)
-        logging.info("[MAIN] âœ“ Done")
+        logging.info("[MAIN] ✓ Done")
