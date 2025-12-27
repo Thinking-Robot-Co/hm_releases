@@ -22,6 +22,8 @@
         }
         .header h1 { font-size: 18px; color: #00ff88; margin-bottom: 5px; }
         .status-bar { display: flex; justify-content: space-between; font-size: 12px; color: #888; }
+        .gps-status { color: #ff9900; font-size: 11px; }
+        .gps-status.active { color: #00ff88; }
         .feed-container { position: relative; background: #000; }
         .feed-container img { width: 100%; display: block; }
         .rec-indicator {
@@ -97,6 +99,85 @@
             letter-spacing: 1.5px;
         }
         .media-list { padding: 10px; padding-bottom: 80px; }
+
+        .recording-session-card {
+            background: linear-gradient(135deg, #3a1a1a 0%, #2a0a0a 100%);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 15px;
+            border: 2px solid #ff4444;
+            animation: recordingPulse 2s infinite;
+            box-shadow: 0 0 20px rgba(255,68,68,0.3);
+        }
+
+        @keyframes recordingPulse {
+            0%, 100% { border-color: #ff4444; box-shadow: 0 0 20px rgba(255,68,68,0.3); }
+            50% { border-color: #ff8888; box-shadow: 0 0 30px rgba(255,68,68,0.5); }
+        }
+
+        .recording-session-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .recording-icon {
+            width: 12px;
+            height: 12px;
+            background: #ff4444;
+            border-radius: 50%;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .recording-session-title {
+            font-size: 16px;
+            color: #ff8888;
+            font-weight: bold;
+        }
+
+        .recording-session-info {
+            font-size: 12px;
+            color: #ccc;
+            margin-bottom: 10px;
+        }
+
+        .recording-chunks-list {
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            padding: 10px;
+        }
+
+        .recording-chunk-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px;
+            margin-bottom: 5px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 6px;
+        }
+
+        .recording-chunk-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .recording-chunk-name {
+            font-size: 12px;
+            color: #fff;
+        }
+
+        .recording-chunk-size {
+            font-size: 12px;
+            color: #00ff88;
+            font-weight: bold;
+        }
+
         .batch-group {
             background: linear-gradient(135deg, #1e3a5f 0%, #2a4a6f 100%);
             border-radius: 12px;
@@ -152,6 +233,7 @@
         .chunk-status.uploading { background: #0099ff; color: #fff; animation: pulse 1.5s infinite; }
         .chunk-status.failed { background: #ff4444; color: #fff; }
         .chunk-status.converting { background: #ff9900; color: #000; animation: pulse 1.5s infinite; }
+        .chunk-status.incomplete { background: #9900ff; color: #fff; }
         .media-item {
             background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
             border-radius: 12px;
@@ -162,6 +244,7 @@
         }
         .media-item.uploaded { border: 2px solid #00ff88; }
         .media-item.failed { border: 2px solid #ff4444; }
+        .media-item.incomplete { border: 2px solid #9900ff; }
         .media-header { display: flex; justify-content: space-between; margin-bottom: 10px; cursor: pointer; }
         .media-name { font-size: 13px; color: #fff; word-break: break-all; flex: 1; padding-right: 10px; }
         .media-size { font-size: 12px; color: #888; background: rgba(255,255,255,0.05); padding: 4px 10px; border-radius: 15px; }
@@ -195,6 +278,7 @@
         .status-badge.uploading { background: #0099ff; color: #fff; animation: pulse 1.5s infinite; }
         .status-badge.failed { background: #ff4444; color: #fff; }
         .status-badge.converting { background: #ff9900; color: #000; animation: pulse 1.5s infinite; }
+        .status-badge.incomplete { background: #9900ff; color: #fff; }
         .empty-state { text-align: center; padding: 60px 20px; color: #666; }
         .modal {
             display: none;
@@ -221,7 +305,24 @@
             cursor: pointer;
         }
         .modal-video { width: 100%; max-height: 40vh; background: #000; border-radius: 12px; margin-bottom: 15px; }
-        .modal-map { width: 100%; height: 350px; background: #1a1a1a; border-radius: 12px; overflow: hidden; }
+        .modal-map-container { margin-bottom: 15px; }
+        .modal-map { 
+            width: 100%; 
+            height: 350px; 
+            background: #1a1a1a; 
+            border-radius: 12px; 
+            overflow: hidden;
+            position: relative;
+        }
+        #map { width: 100%; height: 100%; border-radius: 12px; }
+        .map-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #666;
+            font-size: 14px;
+        }
         .map-info { padding: 15px; background: #1a1a1a; border-radius: 12px; margin-top: 15px; }
         .map-info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #333; }
         .map-info-row:last-child { border-bottom: none; }
@@ -280,6 +381,7 @@
         <h1>🎥 Smart Helmet {{ version }}</h1>
         <div class="status-bar">
             <span id="statusText">STANDBY</span>
+            <span id="gpsStatus" class="gps-status">📍 GPS: Initializing...</span>
             <span id="storageText">Storage: -- GB</span>
         </div>
     </div>
@@ -308,7 +410,12 @@
                 <button class="modal-close" onclick="closePreview()">✕ Close</button>
             </div>
             <video id="previewVideo" class="modal-video" controls></video>
-            <div class="modal-map"><div id="map"></div></div>
+            <div class="modal-map-container">
+                <div class="modal-map">
+                    <div id="map"></div>
+                    <div id="mapLoading" class="map-loading">Loading GPS...</div>
+                </div>
+            </div>
             <div class="map-info" id="mapInfo"></div>
         </div>
     </div>
@@ -337,14 +444,77 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         let isRecording=false,audioEnabled=true,currentRenameFile=null,currentRenameType=null,currentRenameBase=null;
+        let currentRecordingFiles=[];
+        let previewMap=null;
+        let gpsWatchId=null;
+        let hasGPS=false;
+        let lastGPSUpdate=0;
+
+        function startGPS(){
+            if('geolocation' in navigator){
+                console.log('[GPS] Starting watch...');
+                gpsWatchId=navigator.geolocation.watchPosition(
+                    function(position){
+                        hasGPS=true;
+                        lastGPSUpdate=Date.now();
+                        const gpsData={
+                            lat:position.coords.latitude,
+                            lon:position.coords.longitude,
+                            accuracy:position.coords.accuracy,
+                            speed:position.coords.speed||0.0
+                        };
+
+                        fetch('/api/update_gps',{
+                            method:'POST',
+                            headers:{'Content-Type':'application/json'},
+                            body:JSON.stringify(gpsData)
+                        });
+
+                        document.getElementById('gpsStatus').className='gps-status active';
+                        document.getElementById('gpsStatus').textContent=`📍 GPS: ${gpsData.lat.toFixed(5)}, ${gpsData.lon.toFixed(5)}`;
+                    },
+                    function(error){
+                        console.log('[GPS] Error:',error.message);
+                        document.getElementById('gpsStatus').textContent='📍 GPS: Error';
+                        document.getElementById('gpsStatus').className='gps-status';
+                    },
+                    {
+                        enableHighAccuracy:true,
+                        maximumAge:0,
+                        timeout:10000
+                    }
+                );
+            }else{
+                document.getElementById('gpsStatus').textContent='📍 GPS: Not supported';
+            }
+        }
+
+        setInterval(function(){
+            if(hasGPS&&(Date.now()-lastGPSUpdate)>5000){
+                document.getElementById('gpsStatus').textContent='📍 GPS: Searching...';
+                document.getElementById('gpsStatus').className='gps-status';
+            }
+        },3000);
 
         function updateStatus(){
             fetch('/api/status').then(r=>r.json()).then(d=>{
                 isRecording=d.is_recording;
                 audioEnabled=d.audio_enabled;
+                currentRecordingFiles=d.current_recording||[];
+
                 document.getElementById('statusText').textContent=d.status;
                 document.getElementById('storageText').textContent='Storage: '+d.storage_free_gb+' GB';
                 document.getElementById('recIndicator').className='rec-indicator'+(isRecording?' active':'');
+
+                // FIX: Update recording timer
+                if(isRecording && d.recording_time){
+                    const mins = Math.floor(d.recording_time / 60);
+                    const secs = d.recording_time % 60;
+                    document.getElementById('recTimer').textContent = 
+                        String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+                }else{
+                    document.getElementById('recTimer').textContent = '00:00';
+                }
 
                 const btn=document.getElementById('btnAudio');
                 if(audioEnabled){
@@ -362,6 +532,10 @@
                 }else{
                     recBtn.textContent='REC VIDEO';
                     recBtn.className='btn btn-record';
+                }
+
+                if(currentRecordingFiles.length>0){
+                    loadMedia();
                 }
             });
         }
@@ -416,7 +590,6 @@
             if(!newName){alert('Please enter a name');return;}
 
             if(currentRenameType==='batch'){
-                // Batch rename
                 fetch('/api/rename_batch',{
                     method:'POST',
                     headers:{'Content-Type':'application/json'},
@@ -431,7 +604,6 @@
                     }
                 });
             }else{
-                // Single file rename
                 fetch('/api/rename_file',{
                     method:'POST',
                     headers:{'Content-Type':'application/json'},
@@ -451,13 +623,59 @@
         function loadMedia(){
             fetch('/api/list_media').then(r=>r.json()).then(data=>{
                 const container=document.getElementById('mediaList');
-                if(data.length===0){
+                let html='';
+
+                if(currentRecordingFiles.length>0){
+                    const firstFile=currentRecordingFiles[0];
+                    const sessionName=firstFile.name.replace('video_','').replace(/_chunk.*$/,'');
+
+                    html+=`<div class="recording-session-card">
+                        <div class="recording-session-header">
+                            <div class="recording-icon"></div>
+                            <div class="recording-session-title">🎬 RECORDING SESSION</div>
+                        </div>
+                        <div class="recording-session-info">Session: ${sessionName.replace(/_/g,' ')}</div>
+                        <div class="recording-session-info">Started: ${firstFile.started}</div>
+                        <div class="recording-chunks-list">`;
+
+                    let totalSize=0;
+                    currentRecordingFiles.forEach(rec=>{
+                        totalSize+=rec.size;
+                        html+=`<div class="recording-chunk-item">
+                            <span class="recording-chunk-name">● ${rec.name}</span>
+                            <span class="recording-chunk-size">${rec.size} MB</span>
+                        </div>`;
+                    });
+
+                    html+=`</div>
+                        <div class="recording-session-info" style="margin-top:10px;text-align:right;color:#00ff88;font-weight:bold;">
+                            Total: ${totalSize.toFixed(1)} MB (Live)
+                        </div>
+                    </div>`;
+                }
+
+                if(data.length===0&&currentRecordingFiles.length===0){
                     container.innerHTML='<div class="empty-state">No media yet</div>';
                     return;
                 }
 
-                let html='';
-                data.forEach(item=>{
+                const sortedData=data.sort((a,b)=>{
+                    const aConverting=a.type==='batch'?a.converting_count>0:a.converting;
+                    const bConverting=b.type==='batch'?b.converting_count>0:b.converting;
+                    const aIncomplete=a.type==='batch'?a.incomplete_count>0:a.incomplete;
+                    const bIncomplete=b.type==='batch'?b.incomplete_count>0:b.incomplete;
+
+                    if(aConverting&&!bConverting)return -1;
+                    if(!aConverting&&bConverting)return 1;
+                    if(aIncomplete&&!bIncomplete)return -1;
+                    if(!aIncomplete&&bIncomplete)return 1;
+                    if(a.type==='batch'&&b.type!=='batch')return -1;
+                    if(a.type!=='batch'&&b.type==='batch')return 1;
+
+                    return 0;
+                });
+
+                sortedData.forEach(item=>{
                     if(item.type==='batch'){
                         html+=`<div class="batch-group">
                             <div class="batch-header">
@@ -468,6 +686,8 @@
                                 <div class="batch-stat">📦 ${item.chunk_count} chunks</div>
                                 <div class="batch-stat">💾 ${item.total_size.toFixed(1)} MB</div>
                                 <div class="batch-stat">✓ ${item.uploaded_count}/${item.chunk_count} uploaded</div>
+                                ${item.converting_count>0?'<div class="batch-stat">⚙️ '+item.converting_count+' converting</div>':''}
+                                ${item.incomplete_count>0?'<div class="batch-stat">⚠️ '+item.incomplete_count+' incomplete</div>':''}
                             </div>
                             <div class="batch-actions">
                                 <button class="batch-btn batch-btn-rename" onclick="showRenameModal('','batch','${item.base}')">✏️ Rename</button>
@@ -478,12 +698,13 @@
 
                         item.chunks.forEach(chunk=>{
                             let statusHtml='';
-                            if(chunk.converting)statusHtml='<span class="chunk-status converting">⚙️ Converting</span>';
+                            if(chunk.incomplete)statusHtml='<span class="chunk-status incomplete">⚠️ Incomplete</span>';
+                            else if(chunk.converting)statusHtml='<span class="chunk-status converting">⚙️ Converting</span>';
                             else if(chunk.upload_status&&chunk.upload_status.status==='uploading')statusHtml='<span class="chunk-status uploading">☁️ Uploading</span>';
                             else if(chunk.uploaded)statusHtml='<span class="chunk-status uploaded">✓ Uploaded</span>';
                             else if(chunk.failed)statusHtml='<span class="chunk-status failed">✗ Failed</span>';
 
-                            const canPreview=!chunk.converting&&chunk.name.endsWith('.mp4');
+                            const canPreview=!chunk.converting&&!chunk.incomplete&&chunk.name.endsWith('.mp4');
                             const onclick=canPreview?`onclick="showPreview('${chunk.name}')"`:'';
 
                             html+=`<div class="chunk-item" ${onclick}>
@@ -498,21 +719,22 @@
                         html+=`</div></div>`;
                     }else{
                         let statusBadge='';
-                        if(item.converting)statusBadge='<div class="status-badge converting">⚙️ Converting</div>';
+                        if(item.incomplete)statusBadge='<div class="status-badge incomplete">⚠️ Incomplete</div>';
+                        else if(item.converting)statusBadge='<div class="status-badge converting">⚙️ Converting</div>';
                         else if(item.uploaded)statusBadge='<div class="status-badge uploaded">✓ Uploaded</div>';
                         else if(item.upload_status&&item.upload_status.status==='uploading')statusBadge='<div class="status-badge uploading">☁️ Uploading</div>';
                         else if(item.failed)statusBadge='<div class="status-badge failed">✗ Failed</div>';
 
-                        const canUpload=!item.uploaded&&!item.converting&&item.type==='video';
+                        const canUpload=!item.uploaded&&!item.converting&&!item.incomplete&&item.type==='video';
                         const isPhoto=item.type==='image';
-                        const isVideo=item.type==='video'&&!item.converting;
+                        const isVideo=item.type==='video'&&!item.converting&&!item.incomplete;
 
                         let photoPreview='';
                         if(isPhoto)photoPreview=`<img src="/data/${item.name}" class="photo-preview" onclick="showPhoto('${item.name}')">`;
 
                         const clickHandler=isVideo?`onclick="showPreview('${item.name}')"`:'';
 
-                        html+=`<div class="media-item ${item.uploaded?'uploaded':''} ${item.failed?'failed':''}">
+                        html+=`<div class="media-item ${item.uploaded?'uploaded':''} ${item.failed?'failed':''} ${item.incomplete?'incomplete':''}">
                             ${statusBadge}
                             <div class="media-header" ${clickHandler}>
                                 <div class="media-name">${item.type==='video'?'🎬':'📷'} ${item.name}</div>
@@ -537,12 +759,88 @@
             document.getElementById('modalTitle').textContent=filename;
             document.getElementById('previewVideo').src='/data/'+filename;
             document.getElementById('previewModal').className='modal active';
+            document.getElementById('mapLoading').style.display='block';
+            document.getElementById('map').innerHTML='';
+            document.getElementById('mapInfo').innerHTML='';
+
+            fetch('/api/get_gps_data/'+filename).then(r=>r.json()).then(data=>{
+                document.getElementById('mapLoading').style.display='none';
+
+                if(data.error){
+                    document.getElementById('map').innerHTML='<div style="padding:20px;text-align:center;color:#666;">'+data.error+'</div>';
+                    return;
+                }
+
+                if(previewMap){
+                    previewMap.remove();
+                    previewMap=null;
+                }
+
+                const start=data.start;
+                const end=data.end;
+
+                previewMap=L.map('map').setView([start.lat,start.lon],15);
+
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+                    attribution:'© OpenStreetMap',
+                    maxZoom:19
+                }).addTo(previewMap);
+
+                const latlngs=data.points.map(p=>[p.lat,p.lon]);
+                L.polyline(latlngs,{
+                    color:'#00ff88',
+                    weight:4,
+                    opacity:0.8
+                }).addTo(previewMap);
+
+                L.marker([start.lat,start.lon]).bindPopup('Start').addTo(previewMap);
+                L.marker([end.lat,end.lon]).bindPopup('End').addTo(previewMap);
+
+                const bounds=L.latLngBounds(latlngs);
+                previewMap.fitBounds(bounds,{padding:[30,30]});
+
+                document.getElementById('mapInfo').innerHTML=`
+                    <div class="map-info-row">
+                        <span class="map-label">Start:</span>
+                        <span class="map-value">${start.lat.toFixed(6)}, ${start.lon.toFixed(6)}</span>
+                    </div>
+                    <div class="map-info-row">
+                        <span class="map-label">End:</span>
+                        <span class="map-value">${end.lat.toFixed(6)}, ${end.lon.toFixed(6)}</span>
+                    </div>
+                    <div class="map-info-row">
+                        <span class="map-label">GPS Points:</span>
+                        <span class="map-value">${data.points.length} points</span>
+                    </div>
+                    <div class="map-info-row">
+                        <span class="map-label">Started:</span>
+                        <span class="map-value">${start.timestamp}</span>
+                    </div>
+                    <div class="map-info-row">
+                        <span class="map-label">Ended:</span>
+                        <span class="map-value">${end.timestamp}</span>
+                    </div>
+                `;
+
+                setTimeout(()=>{
+                    if(previewMap)previewMap.invalidateSize();
+                },100);
+            }).catch(err=>{
+                console.log('GPS load error:',err);
+                document.getElementById('mapLoading').style.display='none';
+                document.getElementById('map').innerHTML='<div style="padding:20px;text-align:center;color:#666;">GPS load failed</div>';
+            });
         }
 
         function closePreview(){
             document.getElementById('previewModal').className='modal';
-            document.getElementById('previewVideo').pause();
-            document.getElementById('previewVideo').src='';
+            const video=document.getElementById('previewVideo');
+            video.pause();
+            video.src='';
+            if(previewMap){
+                previewMap.remove();
+                previewMap=null;
+            }
         }
 
         function showPhoto(filename){
@@ -584,6 +882,7 @@
             }
         }
 
+        startGPS();
         updateStatus();
         loadMedia();
         setInterval(updateStatus,2000);
