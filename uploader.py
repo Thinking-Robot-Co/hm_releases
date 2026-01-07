@@ -24,14 +24,14 @@ def extract_timestamps_from_filename(filename):
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         return now, now
 
-def extract_gps_from_csv(csv_path):
+def extract_gps_and_time_from_csv(csv_path):
     """
-    Extract start and end GPS coordinates from CSV
-    Returns: (start_location, end_location) as "lat,lon" strings
+    Extract start/end GPS coordinates and timestamps from CSV
+    Returns: (start_location, end_location, start_time, end_time)
     """
     try:
         if not os.path.exists(csv_path):
-            return None, None
+            return None, None, None, None
 
         with open(csv_path, 'r') as f:
             reader = csv_module.reader(f)
@@ -39,28 +39,44 @@ def extract_gps_from_csv(csv_path):
 
         # Skip header row
         if len(rows) < 2:
-            return None, None
+            return None, None, None, None
 
-        # Get first data row (start location)
+        # Get first data row (start)
         first_row = rows[1]
-        start_lat = first_row[1]  # Column 1: Lat
-        start_lon = first_row[2]  # Column 2: Lon
+        # CSV Format: Timestamp, Lat, Lon, Acc, Speed
+        # Timestamp is usually column 0
+        start_ts = first_row[0]
+        start_lat = first_row[1]
+        start_lon = first_row[2]
         start_location = f"{start_lat},{start_lon}"
+        
+        # Try to parse timestamp (format: 2025-12-28 11:22:33.123456)
+        try:
+             # Remove microseconds for upload format if needed, or keep as is
+             start_time = start_ts.split('.')[0] 
+        except:
+             start_time = start_ts
 
-        # Get last data row (end location)
+        # Get last data row (end)
         last_row = rows[-1]
+        end_ts = last_row[0]
         end_lat = last_row[1]
         end_lon = last_row[2]
         end_location = f"{end_lat},{end_lon}"
+        
+        try:
+             end_time = end_ts.split('.')[0]
+        except:
+             end_time = end_ts
 
-        logging.info(f"[UPLOAD] 📍 Start Location: {start_location}")
-        logging.info(f"[UPLOAD] 📍 End Location: {end_location}")
+        logging.info(f"[UPLOAD] 📍 Start: {start_location} ({start_time})")
+        logging.info(f"[UPLOAD] 📍 End: {end_location} ({end_time})")
 
-        return start_location, end_location
+        return start_location, end_location, start_time, end_time
 
     except Exception as e:
-        logging.error(f"[UPLOAD] GPS extraction failed: {e}")
-        return None, None
+        logging.error(f"[UPLOAD] GPS/Time extraction failed: {e}")
+        return None, None, None, None
 
 def upload_to_cloud(video_path, csv_path, device_id):
     """
@@ -85,12 +101,10 @@ def upload_to_cloud(video_path, csv_path, device_id):
         logging.info(f"[UPLOAD] 📦 Video Size: {video_size_mb} MB")
         logging.info(f"[UPLOAD] 📍 Video Path: {video_path}")
 
-        # Extract timestamps
+        # Default timestamps from filename
         start_time, end_time = extract_timestamps_from_filename(filename)
-        logging.info(f"[UPLOAD] ⏰ Start Time: {start_time}")
-        logging.info(f"[UPLOAD] ⏰ End Time: {end_time}")
-
-        # Extract GPS locations from CSV
+        
+        # Extract GPS locations and accurate times from CSV
         start_location = None
         end_location = None
         csv_exists = csv_path and os.path.exists(csv_path)
@@ -100,9 +114,17 @@ def upload_to_cloud(video_path, csv_path, device_id):
             logging.info(f"[UPLOAD] 📊 CSV File: {os.path.basename(csv_path)}")
             logging.info(f"[UPLOAD] 📦 CSV Size: {csv_size_kb} KB")
 
-            start_location, end_location = extract_gps_from_csv(csv_path)
+            gps_start_loc, gps_end_loc, gps_start_time, gps_end_time = extract_gps_and_time_from_csv(csv_path)
+            
+            if gps_start_loc: start_location = gps_start_loc
+            if gps_end_loc: end_location = gps_end_loc
+            if gps_start_time: start_time = gps_start_time
+            if gps_end_time: end_time = gps_end_time
         else:
             logging.warning(f"[UPLOAD] ⚠️ No CSV file found: {csv_path}")
+
+        logging.info(f"[UPLOAD] ⏰ Final Start Time: {start_time}")
+        logging.info(f"[UPLOAD] ⏰ Final End Time: {end_time}")
 
         # Device ID
         logging.info(f"[UPLOAD] 🔑 Device ID: {device_id}")
@@ -133,10 +155,26 @@ def upload_to_cloud(video_path, csv_path, device_id):
         logging.info(f"[UPLOAD] 🌐 URL: {UPLOAD_URL}")
         logging.info("[UPLOAD] 📡 Uploading...")
 
-        # Upload video file only (GPS data sent as POST parameters)
-        with open(video_path, 'rb') as vf:
-            files = {'video': (filename, vf, 'video/mp4')}
+        # Upload video file AND CSV file
+        files = {}
+        # Open files safely
+        opened_files = []
+        try:
+            vf = open(video_path, 'rb')
+            opened_files.append(vf)
+            files['video'] = (filename, vf, 'video/mp4')
+            
+            if csv_exists:
+                cf = open(csv_path, 'rb')
+                opened_files.append(cf)
+                files['gps_csv'] = (os.path.basename(csv_path), cf, 'text/csv')
+                logging.info(f"[UPLOAD] 📎 Attaching CSV: {os.path.basename(csv_path)}")
+
             resp = requests.post(UPLOAD_URL, headers=headers, files=files, data=data, timeout=120)
+            
+        finally:
+            for f in opened_files:
+                f.close()
 
         # Log response
         logging.info("=" * 70)

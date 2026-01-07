@@ -53,6 +53,20 @@ GPS_RECORD_INTERVAL = 5.0
 
 DEVICE_ID = "smart_hm_02"
 
+def get_serial_number():
+    """Get Raspberry Pi Serial Number"""
+    try:
+        with open('/proc/cpuinfo', 'r') as f:
+            for line in f:
+                if line.startswith('Serial'):
+                    return line.split(':')[1].strip()
+    except:
+        pass
+    return "smart_hm_02"
+
+DEVICE_ID = get_serial_number()
+logging.info(f"[SYSTEM] Device ID: {DEVICE_ID}")
+
 DISCOVERY_PORT = 5002
 MAGIC_WORD = "WHO_IS_RPI_CAM?"
 RESPONSE_PREFIX = "I_AM_RPI_CAM"
@@ -583,6 +597,7 @@ def update_gps():
     global current_gps_data
     if request.json:
         current_gps_data = request.json
+        # logging.debug(f"[GPS] Update: {current_gps_data['lat']}, {current_gps_data['lon']}")
     return "OK"
 
 @app.route('/api/status')
