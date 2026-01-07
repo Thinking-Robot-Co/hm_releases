@@ -12,6 +12,25 @@
     let gpsPoints=[];
     let currentMarker=null;
     
+    // Wake Lock to prevent sleep and keep GPS active
+    let wakeLock = null;
+    async function requestWakeLock() {
+        if ('wakeLock' in navigator) {
+            try {
+                wakeLock = await navigator.wakeLock.request('screen');
+                console.log('[WAKE LOCK] Active');
+                wakeLock.addEventListener('release', () => {
+                    console.log('[WAKE LOCK] Released');
+                });
+            } catch (err) {
+                console.error(`[WAKE LOCK] Error: ${err.name}, ${err.message}`);
+            }
+        }
+    }
+    // Request wake lock on load and click
+    requestWakeLock();
+    document.addEventListener('click', requestWakeLock);
+
     // FIX 1: Local timer (updates every 1 second)
     function startRecordingTimer(){
         recordingStartTime=Date.now();
@@ -329,7 +348,7 @@ function renderBatchGroup(batch) {
                 ${(item.type === 'video' && !item.uploaded && !item.converting && !item.incomplete) ? 
                     `<button class="action-btn btn-upload" onclick="event.stopPropagation(); uploadFile('${item.name}')">☁️ Upload</button>` : ''}
                 
-                <button class="action-btn btn-download" onclick="event.stopPropagation(); window.location.href='/api/download/${item.name}'">⬇️ Download</button>
+                <button class="action-btn btn-download" onclick="event.stopPropagation(); window.location.href='/api/download/${item.name}'" style="display:none">⬇️ Download</button>
                 
                 ${(item.type === 'video' && !item.converting) ? 
                     `<button class="action-btn btn-rename" onclick="event.stopPropagation(); showRenameModal('${item.name}')">✏️ Rename</button>` : ''}
