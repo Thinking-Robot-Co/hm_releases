@@ -1136,7 +1136,7 @@ if __name__ == '__main__':
 
     logging.info(f"[MAIN] Starting Flask on port {PORT}...")
     try:
-        if ssl_available:
+        if False:
             app.run(host='0.0.0.0', port=PORT, ssl_context=('cert.pem', 'key.pem'), debug=False, threaded=True)
         else:
             app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
