@@ -17,7 +17,7 @@ import RPi.GPIO as GPIO
 # -------------------- CONFIG --------------------
 IGNORE_SSID = "PSRVJ"
 WLAN_IFACE = "wlan0"
-MAIN_PY_PATH = os.path.join(os.path.dirname(__file__), "main.py")
+INIT_PY_PATH = os.path.join(os.path.dirname(__file__), "init.py")
 
 # Match main.py camera settings
 CAM_WIDTH, CAM_HEIGHT = 1640, 1232
@@ -226,8 +226,8 @@ def countdown(seconds: int, prefix: str):
 
 
 def launch_main_py():
-    logging.info("[BOOT] Launching main.py now...")
-    os.execv("/usr/bin/python3", ["/usr/bin/python3", MAIN_PY_PATH])
+    logging.info("[BOOT] Launching Init.py now...")
+    os.execv("/usr/bin/python3", ["/usr/bin/python3", INIT_PY_PATH])
 
 
 def draw_overlay(bgr, ssid_now: str, msg: str):
@@ -267,8 +267,8 @@ def main():
         logging.critical("[FATAL] nmcli not found.")
         raise SystemExit(1)
 
-    if not os.path.exists(MAIN_PY_PATH):
-        logging.critical(f"[FATAL] main.py not found at: {MAIN_PY_PATH}")
+    if not os.path.exists(INIT_PY_PATH):
+        logging.critical(f"[FATAL] main.py not found at: {INIT_PY_PATH}")
         raise SystemExit(1)
 
     led = LedController(LED_PIN)
