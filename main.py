@@ -1,1203 +1,299 @@
 #!/usr/bin/env python3
-"""
-Smart Helmet Camera System v27.13-ULTIMATE (JSON GPS + location payload upload)
-"""
-
-import time
 import os
-import csv
-import json
-import datetime
-import sys
-import threading
-import glob
-import socket
-import shutil
-import logging
 import re
-import cv2
-import numpy as np
+import json
+import time
 import subprocess
-from flask import Flask, Response, render_template, request, jsonify, send_from_directory
-from picamera2 import Picamera2
-from picamera2.encoders import H264Encoder
-from libcamera import Transform
-from uploader import upload_to_cloud
+import logging
 
-VERSION = "v27.13-ULTIMATE"
-RECORD_FOLDER = "recordings"
-PORT = 5001
+import cv2
+from picamera2 import Picamera2
+from libcamera import Transform
+from pyzbar.pyzbar import decode as zbar_decode
+
+# -------------------- CONFIG --------------------
+IGNORE_SSID = "PSRVJ"          # if connected to this, keep scanning (don't start main.py)
+WLAN_IFACE = "wlan0"
+MAIN_PY_PATH = os.path.join(os.path.dirname(__file__), "main.py")
+
+# Match main.py camera settings
 CAM_WIDTH, CAM_HEIGHT = 1640, 1232
 FPS = 30.0
-STREAM_HEIGHT = 480
-VIDEO_BITRATE = 1500000
 
-AUTO_CHUNK_ENABLED = True
-CHUNK_SIZE_MB = 60
-CHUNK_CHECK_INTERVAL = 10
+# UX
+COUNTDOWN_BEFORE_SWITCH = 5
+POST_CONNECT_WAIT = 2
+RESCAN_DELAY_ON_FAIL = 2
 
-AUDIO_ENABLED_DEFAULT = True
-AUDIO_SAMPLE_RATE = 44100
-AUDIO_CHANNELS = 1
-USB_MIC_DEVICE = "hw:3,0"
+WINDOW_NAME = "SmartHelmet QR Provisioning"
+# ------------------------------------------------
 
-GPS_RECORD_INTERVAL = 5.0
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-DEVICE_ID = "smart_hm_02"
 
-def get_serial_number():
+def run(cmd, timeout=40):
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def which(binary: str):
     try:
-        with open('/proc/cpuinfo', 'r') as f:
-            for line in f:
-                if line.startswith('Serial'):
-                    return line.split(':')[1].strip()
-    except:
-        pass
-    return "smart_hm_02"
-
-DEVICE_ID = get_serial_number()
-
-DISCOVERY_PORT = 5002
-MAGIC_WORD = "WHO_IS_RPI_CAM?"
-RESPONSE_PREFIX = "I_AM_RPI_CAM"
-
-os.environ["LIBCAMERA_RPI_TUNING_FILE"] = "/usr/share/libcamera/ipa/rpi/vc4/imx219.json"
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
-
-class SuppressedLogFilter(logging.Filter):
-    def filter(self, record):
-        return 'SSLEOFError' not in str(record.getMessage())
-
-werkzeug_logger = logging.getLogger('werkzeug')
-werkzeug_logger.addFilter(SuppressedLogFilter())
-
-if not os.path.exists(RECORD_FOLDER):
-    os.makedirs(RECORD_FOLDER)
-
-app = Flask(__name__)
-
-frame_lock = threading.Lock()
-frame_condition = threading.Condition(frame_lock)
-latest_frame_jpeg = None
-
-current_gps_data = {"lat": 0.0, "lon": 0.0, "accuracy": 0.0, "speed": 0.0}
-
-app_running = True
-req_start_rec = False
-req_stop_rec = False
-is_recording_active = False
-recording_start_time = None
-
-audio_enabled = AUDIO_ENABLED_DEFAULT
-audio_process = None
-
-upload_status = {}
-upload_status_lock = threading.Lock()
-
-chunk_number = 0
-last_chunk_check = 0
-
-current_recording_files = []
-current_recording_lock = threading.Lock()
-
-converting_files = set()
-converting_files_lock = threading.Lock()
-
-incomplete_files = set()
-incomplete_files_lock = threading.Lock()
-
-def extract_timestamp(filename):
-    match = re.search(r'(\d{8}_\d{6})', filename)
-    return match.group(1) if match else None
-
-def _write_gps_json_file(path, points):
-    try:
-        with open(path, "w") as jf:
-            json.dump({"points": points}, jf)
-        return True
-    except:
-        return False
-
-def _load_gps_json_points(path):
-    try:
-        with open(path, "r") as jf:
-            data = json.load(jf)
-        pts = data.get("points", [])
-        if not isinstance(pts, list):
-            return []
-        out = []
-        for p in pts:
-            try:
-                lat = float(p.get("lat", 0.0))
-                lon = float(p.get("lon", 0.0))
-                ts = p.get("timestamp", "")
-                if (lat != 0.0 or lon != 0.0) and ts:
-                    out.append({"lat": lat, "lon": lon, "timestamp": ts})
-            except:
-                continue
-        return out
-    except:
-        return []
-
-def _gps_json_variations_for_video(filename):
-    return [
-        filename.replace('video_', 'gps_').replace('.mp4', '.json'),
-        filename.replace('uploaded_', 'gps_').replace('.mp4', '.json'),
-        filename.replace('uploaded_', 'uploaded_gps_').replace('.mp4', '.json'),
-        filename.replace('failed_upload_', 'gps_').replace('.mp4', '.json'),
-        filename.replace('failed_upload_', 'failed_upload_gps_').replace('.mp4', '.json'),
-    ]
-
-def _find_existing_gps_json_for_video(filename):
-    for name in _gps_json_variations_for_video(filename):
-        p = os.path.join(RECORD_FOLDER, name)
-        if os.path.exists(p):
-            return p
-    return None
-
-def recover_orphaned_files():
-    orphaned = glob.glob(os.path.join(RECORD_FOLDER, "temp_*.h264"))
-    if not orphaned:
-        logging.info("[RECOVERY] ✓ No orphaned files found")
-        return
-
-    logging.info(f"[RECOVERY] Found {len(orphaned)} orphaned file(s)")
-
-    for temp_file in orphaned:
-        try:
-            temp_name = os.path.basename(temp_file)
-            incomplete_name = temp_name.replace('temp_', 'incomplete_')
-            incomplete_path = os.path.join(RECORD_FOLDER, incomplete_name)
-
-            os.rename(temp_file, incomplete_path)
-
-            with incomplete_files_lock:
-                incomplete_files.add(incomplete_name)
-
-            json_name = temp_name.replace('temp_', 'gps_').replace('.h264', '.json')
-            json_path = os.path.join(RECORD_FOLDER, json_name)
-            if os.path.exists(json_path):
-                incomplete_json = json_name.replace('gps_', 'incomplete_gps_')
-                incomplete_json_path = os.path.join(RECORD_FOLDER, incomplete_json)
-                os.rename(json_path, incomplete_json_path)
-
-            csv_name = temp_name.replace('temp_', 'gps_').replace('.h264', '.csv')
-            csv_path = os.path.join(RECORD_FOLDER, csv_name)
-            if os.path.exists(csv_path):
-                incomplete_csv = csv_name.replace('gps_', 'incomplete_gps_')
-                incomplete_csv_path = os.path.join(RECORD_FOLDER, incomplete_csv)
-                os.rename(csv_path, incomplete_csv_path)
-
-            audio_name = temp_name.replace('temp_', 'audio_').replace('.h264', '.wav')
-            audio_path = os.path.join(RECORD_FOLDER, audio_name)
-            if os.path.exists(audio_path):
-                incomplete_audio = audio_name.replace('audio_', 'incomplete_audio_')
-                incomplete_audio_path = os.path.join(RECORD_FOLDER, incomplete_audio)
-                os.rename(audio_path, incomplete_audio_path)
-
-            logging.info(f"[RECOVERY] ⚠️ Marked as incomplete: {incomplete_name}")
-
-        except Exception as e:
-            logging.error(f"[RECOVERY] Error processing {temp_file}: {e}")
-
-    logging.info(f"[RECOVERY] ✓ Marked {len(orphaned)} orphaned files as incomplete")
-
-def generate_ssl_certificates():
-    if os.path.exists('cert.pem') and os.path.exists('key.pem'):
-        logging.info("[SSL] ✓ Certificates already exist")
-        return True
-
-    logging.info("[SSL] Generating self-signed certificates...")
-    try:
-        cmd = [
-            'openssl', 'req', '-x509', '-newkey', 'rsa:2048',
-            '-keyout', 'key.pem', '-out', 'cert.pem',
-            '-days', '365', '-nodes',
-            '-subj', '/C=IN/ST=Maharashtra/L=Nagpur/O=ThinkingRobot/OU=SmartHelmet/CN=raspberrypi'
-        ]
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0 and os.path.exists('cert.pem') and os.path.exists('key.pem'):
-            os.chmod('key.pem', 0o600)
-            os.chmod('cert.pem', 0o600)
-            logging.info("[SSL] ✓ Certificates generated successfully")
-            return True
-        else:
-            logging.warning(f"[SSL] ✗ Certificate generation failed: {result.stderr}")
-            return False
-    except Exception as e:
-        logging.warning(f"[SSL] ✗ Could not generate certificates: {e}")
-        return False
-
-def start_audio_recording(audio_file):
-    global audio_process
-    if not audio_enabled:
+        from shutil import which as _which
+        return _which(binary)
+    except Exception:
         return None
 
+
+def get_current_ssid():
     try:
-        check_cmd = ["arecord", "-l"]
-        result = subprocess.run(check_cmd, capture_output=True, text=True)
-        if f"card {USB_MIC_DEVICE.split(':')[1].split(',')[0]}" not in result.stdout:
-            logging.warning(f"[AUDIO] USB microphone not found at {USB_MIC_DEVICE}, skipping audio")
-            return None
-
-        cmd = [
-            "arecord",
-            "-D", USB_MIC_DEVICE,
-            "-f", "S16_LE",
-            "-c", str(AUDIO_CHANNELS),
-            "-r", str(AUDIO_SAMPLE_RATE),
-            audio_file
-        ]
-
-        audio_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return audio_process
-    except Exception as e:
-        logging.error(f"[AUDIO] Failed to start: {e}")
+        r = run(["iwgetid", "-r"], timeout=5)
+        ssid = (r.stdout or "").strip()
+        return ssid if ssid else None
+    except Exception:
         return None
 
-def stop_audio_recording():
-    global audio_process
-    if audio_process:
+
+def has_ipv4():
+    try:
+        r = run(["ip", "-4", "addr", "show", WLAN_IFACE], timeout=5)
+        return "inet " in (r.stdout or "")
+    except Exception:
+        return False
+
+
+def verify_connected(expected_ssid: str = None):
+    ssid = get_current_ssid()
+    if not ssid:
+        return False, None
+    if expected_ssid and ssid != expected_ssid:
+        return False, ssid
+    if not has_ipv4():
+        return False, ssid
+    return True, ssid
+
+
+def parse_wifi_qr(payload: str):
+    """
+    Supported:
+    1) WIFI:T:WPA;S:MySSID;P:MyPass;;
+    2) {"ssid":"MySSID","password":"MyPass"}
+    3) ssid=MySSID;password=MyPass
+    Returns (ssid, password) or (None, None)
+    """
+    if not payload:
+        return None, None
+
+    s = payload.strip()
+
+    # JSON
+    if s.startswith("{") and s.endswith("}"):
         try:
-            audio_process.terminate()
-            audio_process.wait(timeout=5)
+            obj = json.loads(s)
+            ssid = obj.get("ssid") or obj.get("S")
+            password = obj.get("password") or obj.get("P")
+            if ssid is not None and password is not None:
+                return str(ssid), str(password)
         except Exception:
-            try:
-                audio_process.kill()
-            except:
-                pass
-        finally:
-            audio_process = None
+            pass
 
-def convert_and_merge(h264_path, audio_path, mp4_path):
-    h264_name = os.path.basename(h264_path)
-    mp4_name = os.path.basename(mp4_path)
+    # Standard WIFI:
+    if s.startswith("WIFI:"):
+        m_s = re.search(r"S:([^;]*)", s)
+        m_p = re.search(r"P:([^;]*)", s)
+        ssid = m_s.group(1) if m_s else None
+        password = m_p.group(1) if m_p else ""
+        if ssid:
+            return ssid, password
 
-    with converting_files_lock:
-        converting_files.add(mp4_name)
-
-    time.sleep(2.0)
-
-    try:
-        has_audio = os.path.exists(audio_path) and os.path.getsize(audio_path) > 1000
-
-        if has_audio:
-            cmd = [
-                "nice", "-n", "19",
-                "ffmpeg",
-                "-r", str(int(FPS)),
-                "-i", h264_path,
-                "-i", audio_path,
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-shortest",
-                "-y", mp4_path
-            ]
-        else:
-            cmd = [
-                "nice", "-n", "19",
-                "ffmpeg",
-                "-r", str(int(FPS)),
-                "-i", h264_path,
-                "-c:v", "copy",
-                "-y", mp4_path
-            ]
-
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        if os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 0:
-            try:
-                os.remove(h264_path)
-            except:
-                pass
-            if has_audio:
-                try:
-                    os.remove(audio_path)
-                except:
-                    pass
-    except Exception as e:
-        logging.error(f"[CONVERT] ✗ Error: {e}")
-    finally:
-        with converting_files_lock:
-            converting_files.discard(mp4_name)
-
-def camera_worker():
-    global latest_frame_jpeg, is_recording_active, req_start_rec, req_stop_rec, current_gps_data
-    global chunk_number, last_chunk_check, recording_start_time, audio_process
-    global current_recording_files
-
-    gps_json_path = None
-    gps_points = []
-    last_gps_time = 0
-
-    current_h264_name = None
-    current_audio_name = None
-    current_mp4_name = None
-    current_encoder = None
-    recording_session_start = None
-
-    try:
-        picam2 = Picamera2()
-
-        config = picam2.create_video_configuration(
-            main={"size": (CAM_WIDTH, CAM_HEIGHT), "format": "YUV420"},
-            lores={"size": (640, 480), "format": "YUV420"},
-            transform=Transform(hflip=True, vflip=True),
-            controls={"FrameRate": FPS},
-            buffer_count=6
-        )
-        config["sensor"]["output_size"] = (CAM_WIDTH, CAM_HEIGHT)
-        picam2.configure(config)
-        picam2.start()
-        picam2.set_controls({"ScalerCrop": (0, 0, 3280, 2464)})
-        time.sleep(0.5)
-    except Exception as e:
-        logging.critical(f"[CAMERA] ✗ Hardware Error: {e}")
-        return
-
-    while app_running:
+    # Simple kv
+    low = s.lower()
+    if "ssid=" in low and "password=" in low:
         try:
-            if req_start_rec:
-                req_start_rec = False
-                if not is_recording_active:
-                    chunk_number = 0
-                    recording_session_start = datetime.datetime.now()
-                    recording_start_time = time.time()
-                    last_chunk_check = time.time()
-                    ts = recording_session_start.strftime("%Y%m%d_%H%M%S")
-
-                    current_h264_name = os.path.join(RECORD_FOLDER, f"temp_{ts}_chunk{chunk_number:03d}.h264")
-                    current_audio_name = os.path.join(RECORD_FOLDER, f"audio_{ts}_chunk{chunk_number:03d}.wav")
-                    current_mp4_name = os.path.join(RECORD_FOLDER, f"video_{ts}_chunk{chunk_number:03d}.mp4")
-
-                    gps_json_path = os.path.join(RECORD_FOLDER, f"gps_{ts}_chunk{chunk_number:03d}.json")
-                    gps_points = []
-                    _write_gps_json_file(gps_json_path, gps_points)
-
-                    try:
-                        current_encoder = H264Encoder(bitrate=VIDEO_BITRATE, profile="high")
-                        picam2.start_recording(current_encoder, current_h264_name)
-                        start_audio_recording(current_audio_name)
-
-                        is_recording_active = True
-
-                        with current_recording_lock:
-                            current_recording_files.append({
-                                "h264": os.path.basename(current_h264_name),
-                                "mp4": os.path.basename(current_mp4_name),
-                                "started": recording_session_start.strftime("%Y-%m-%d %H:%M:%S")
-                            })
-                    except Exception as rec_err:
-                        logging.error(f"[RECORD] ✗ Start failed: {rec_err}")
-                        is_recording_active = False
-
-            if is_recording_active and AUTO_CHUNK_ENABLED:
-                now = time.time()
-                if (now - last_chunk_check) >= CHUNK_CHECK_INTERVAL:
-                    last_chunk_check = now
-                    try:
-                        if os.path.exists(current_h264_name):
-                            file_size_mb = os.path.getsize(current_h264_name) / (1024 * 1024)
-                            if file_size_mb >= CHUNK_SIZE_MB:
-                                picam2.stop_recording()
-                                stop_audio_recording()
-
-                                if current_h264_name and current_mp4_name:
-                                    t = threading.Thread(
-                                        target=convert_and_merge,
-                                        args=(current_h264_name, current_audio_name, current_mp4_name)
-                                    )
-                                    t.daemon = True
-                                    t.start()
-
-                                chunk_number += 1
-                                ts = recording_session_start.strftime("%Y%m%d_%H%M%S")
-
-                                current_h264_name = os.path.join(RECORD_FOLDER, f"temp_{ts}_chunk{chunk_number:03d}.h264")
-                                current_audio_name = os.path.join(RECORD_FOLDER, f"audio_{ts}_chunk{chunk_number:03d}.wav")
-                                current_mp4_name = os.path.join(RECORD_FOLDER, f"video_{ts}_chunk{chunk_number:03d}.mp4")
-
-                                gps_json_path = os.path.join(RECORD_FOLDER, f"gps_{ts}_chunk{chunk_number:03d}.json")
-                                gps_points = []
-                                _write_gps_json_file(gps_json_path, gps_points)
-
-                                current_encoder = H264Encoder(bitrate=VIDEO_BITRATE, profile="high")
-                                picam2.start_recording(current_encoder, current_h264_name)
-                                start_audio_recording(current_audio_name)
-
-                                with current_recording_lock:
-                                    current_recording_files.append({
-                                        "h264": os.path.basename(current_h264_name),
-                                        "mp4": os.path.basename(current_mp4_name),
-                                        "started": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                    })
-
-                    except Exception as chunk_err:
-                        logging.error(f"[CHUNK] ✗ Size check failed: {chunk_err}")
-
-            if req_stop_rec:
-                req_stop_rec = False
-                if is_recording_active:
-                    try:
-                        picam2.stop_recording()
-                        stop_audio_recording()
-                        picam2.start()
-                    except Exception as stop_err:
-                        logging.error(f"[RECORD] ✗ Stop error: {stop_err}")
-
-                    is_recording_active = False
-                    recording_start_time = None
-                    current_encoder = None
-
-                    with current_recording_lock:
-                        current_recording_files = []
-
-                    if current_h264_name and current_mp4_name:
-                        t = threading.Thread(
-                            target=convert_and_merge,
-                            args=(current_h264_name, current_audio_name, current_mp4_name)
-                        )
-                        t.daemon = True
-                        t.start()
-
-            time.sleep(0.05)
-
-            try:
-                raw_yuv = picam2.capture_array("lores")
-                if raw_yuv is not None:
-                    frame_bgr = cv2.cvtColor(raw_yuv, cv2.COLOR_YUV2BGR_I420)
-
-                    if is_recording_active:
-                        now = time.time()
-                        if (now - last_gps_time) >= GPS_RECORD_INTERVAL:
-                            ts_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-                            try:
-                                lat = float(current_gps_data.get("lat", 0.0))
-                                lon = float(current_gps_data.get("lon", 0.0))
-                                acc = float(current_gps_data.get("accuracy", 0.0))
-                                spd = float(current_gps_data.get("speed", 0.0))
-                            except:
-                                lat, lon, acc, spd = 0.0, 0.0, 0.0, 0.0
-
-                            gps_points.append({
-                                "timestamp": ts_str,
-                                "lat": lat,
-                                "lon": lon,
-                                "accuracy": acc,
-                                "speed": spd
-                            })
-                            if gps_json_path:
-                                _write_gps_json_file(gps_json_path, gps_points)
-
-                            last_gps_time = now
-
-                    ret, buf = cv2.imencode('.jpg', frame_bgr)
-                    if ret:
-                        with frame_lock:
-                            latest_frame_jpeg = buf.tobytes()
-                            frame_condition.notify_all()
-            except Exception:
-                pass
-
-            time.sleep(0.005)
-
-        except Exception as e:
-            logging.error(f"[CAMERA] Loop error: {e}")
-            time.sleep(0.1)
-
-    try:
-        if is_recording_active:
-            try:
-                picam2.stop_recording()
-                stop_audio_recording()
-            except:
-                pass
-        picam2.stop()
-    except:
-        pass
-
-def discovery_service():
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(('', DISCOVERY_PORT))
-        reply = f"{RESPONSE_PREFIX}|{socket.gethostname()}".encode('utf-8')
-
-        while app_running:
-            try:
-                sock.settimeout(1.0)
-                data, addr = sock.recvfrom(1024)
-                if data.decode().strip() == MAGIC_WORD:
-                    sock.sendto(reply, addr)
-            except socket.timeout:
-                continue
-            except Exception:
-                time.sleep(1)
-    except Exception as e:
-        logging.error(f"[DISCOVERY] Error: {e}")
-
-@app.route('/')
-def index():
-    return render_template('index.html', version=VERSION)
-
-@app.route('/video_feed')
-def video_feed():
-    def generate():
-        while True:
-            with frame_condition:
-                frame_condition.wait(timeout=1.0)
-                frame = latest_frame_jpeg
-            if frame:
-                try:
-                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-                except Exception:
-                    break
-    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
-@app.route('/api/start_record')
-def start_record():
-    global req_start_rec
-    if not is_recording_active:
-        req_start_rec = True
-    return "OK"
-
-@app.route('/api/stop_record', methods=['POST'])
-def stop_record():
-    global req_stop_rec
-    if is_recording_active:
-        req_stop_rec = True
-    return "OK"
-
-@app.route('/api/toggle_audio', methods=['POST'])
-def toggle_audio():
-    global audio_enabled
-    data = request.json or {}
-    audio_enabled = data.get('enabled', True)
-    return jsonify({"success": True, "audio_enabled": audio_enabled})
-
-@app.route('/api/capture_photo')
-def capture_photo():
-    with frame_lock:
-        if latest_frame_jpeg is None:
-            return "ERROR"
-        data = latest_frame_jpeg
-
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = os.path.join(RECORD_FOLDER, f"img_{ts}.jpg")
-    nparr = np.frombuffer(data, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-    try:
-        txt = f"GPS: {float(current_gps_data.get('lat',0.0)):.5f}, {float(current_gps_data.get('lon',0.0)):.5f}"
-    except:
-        txt = "GPS: 0.00000, 0.00000"
-
-    cv2.putText(img, txt, (10, STREAM_HEIGHT-20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
-    cv2.imwrite(path, img)
-    return "OK"
-
-@app.route('/api/update_gps', methods=['POST'])
-def update_gps():
-    global current_gps_data
-    if request.json:
-        current_gps_data = request.json
-    return "OK"
-
-@app.route('/api/status')
-def get_status():
-    space = 0
-    try:
-        space = round(shutil.disk_usage(RECORD_FOLDER).free / (2**30), 2)
-    except:
-        pass
-
-    recording_time = 0
-    if is_recording_active and recording_start_time:
-        recording_time = int(time.time() - recording_start_time)
-
-    current_files = []
-    with current_recording_lock:
-        for rec_file in current_recording_files:
-            h264_path = os.path.join(RECORD_FOLDER, rec_file["h264"])
-            size_mb = 0
-            if os.path.exists(h264_path):
-                size_mb = round(os.path.getsize(h264_path) / (1024 * 1024), 2)
-            current_files.append({
-                "name": rec_file["mp4"],
-                "h264": rec_file["h264"],
-                "size": size_mb,
-                "started": rec_file["started"]
-            })
-
-    return jsonify({
-        "status": "RECORDING" if is_recording_active else "STANDBY",
-        "storage_free_gb": space,
-        "is_recording": is_recording_active,
-        "recording_time": recording_time,
-        "audio_enabled": audio_enabled,
-        "current_recording": current_files,
-        "gps": current_gps_data
-    })
-
-@app.route('/api/rename_file', methods=['POST'])
-def rename_file():
-    try:
-        data = request.json or {}
-        old_name = data.get('old_name')
-        new_name = data.get('new_name')
-
-        if not old_name or not new_name:
-            return jsonify({"success": False, "error": "Missing parameters"})
-
-        new_name = new_name.strip()
-        if not new_name.endswith('.mp4'):
-            new_name += '.mp4'
-        new_name = os.path.basename(new_name)
-
-        old_path = os.path.join(RECORD_FOLDER, old_name)
-        new_path = os.path.join(RECORD_FOLDER, new_name)
-
-        if not os.path.exists(old_path):
-            return jsonify({"success": False, "error": "File not found"})
-        if os.path.exists(new_path):
-            return jsonify({"success": False, "error": "File name already exists"})
-
-        os.rename(old_path, new_path)
-
-        old_json = old_name.replace('video_', 'gps_').replace('.mp4', '.json')
-        new_json = new_name.replace('video_', 'gps_').replace('.mp4', '.json')
-        old_json_path = os.path.join(RECORD_FOLDER, old_json)
-        new_json_path = os.path.join(RECORD_FOLDER, new_json)
-        if os.path.exists(old_json_path):
-            os.rename(old_json_path, new_json_path)
-
-        old_csv = old_name.replace('video_', 'gps_').replace('.mp4', '.csv')
-        new_csv = new_name.replace('video_', 'gps_').replace('.mp4', '.csv')
-        old_csv_path = os.path.join(RECORD_FOLDER, old_csv)
-        new_csv_path = os.path.join(RECORD_FOLDER, new_csv)
-        if os.path.exists(old_csv_path):
-            os.rename(old_csv_path, new_csv_path)
-
-        return jsonify({"success": True, "new_name": new_name})
-
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-@app.route('/api/rename_batch', methods=['POST'])
-def rename_batch():
-    try:
-        data = request.json or {}
-        base = data.get('base')
-        new_name = data.get('new_name')
-
-        if not base or not new_name:
-            return jsonify({"success": False, "error": "Missing parameters"})
-
-        new_name = new_name.strip().replace(' ', '_')
-        new_name = new_name.replace('.mp4', '').replace('.json', '').replace('.csv', '')
-
-        base_ts = extract_timestamp(base)
-        if not base_ts:
-            return jsonify({"success": False, "error": "Cannot extract timestamp from base"})
-
-        chunks = glob.glob(os.path.join(RECORD_FOLDER, f"*{base_ts}_chunk*.mp4"))
-        chunks += glob.glob(os.path.join(RECORD_FOLDER, f"*{base_ts}_chunk*.h264"))
-
-        if not chunks:
-            return jsonify({"success": False, "error": "No chunks found"})
-
-        renamed_count = 0
-
-        for old_path in chunks:
-            old_filename = os.path.basename(old_path)
-
-            if '_chunk' in old_filename:
-                chunk_part = old_filename.split('_chunk')[1]
-                chunk_num = chunk_part.split('.')[0]
-                ext = old_filename.split('.')[-1]
-
-                if ext == 'h264':
-                    if 'incomplete_' in old_filename:
-                        new_filename = f"incomplete_{new_name}_chunk{chunk_num}.h264"
-                    else:
-                        new_filename = f"temp_{new_name}_chunk{chunk_num}.h264"
-                else:
-                    if 'uploaded_' in old_filename:
-                        new_filename = f"uploaded_{new_name}_chunk{chunk_num}.mp4"
-                    elif 'failed_upload_' in old_filename:
-                        new_filename = f"failed_upload_{new_name}_chunk{chunk_num}.mp4"
-                    else:
-                        new_filename = f"video_{new_name}_chunk{chunk_num}.mp4"
-
-                new_path = os.path.join(RECORD_FOLDER, new_filename)
-
-                if os.path.exists(new_path):
-                    return jsonify({"success": False, "error": f"File {new_filename} already exists"})
-
-                os.rename(old_path, new_path)
-                renamed_count += 1
-
-                if ext == 'mp4':
-                    for prefix in ['gps_', 'uploaded_gps_', 'failed_upload_gps_']:
-                        old_json = old_filename.replace('video_', prefix).replace('uploaded_', prefix).replace('failed_upload_', prefix).replace('.mp4', '.json')
-                        old_json_path = os.path.join(RECORD_FOLDER, old_json)
-                        if os.path.exists(old_json_path):
-                            new_json = new_filename.replace('video_', prefix).replace('uploaded_', prefix).replace('failed_upload_', prefix).replace('.mp4', '.json')
-                            new_json_path = os.path.join(RECORD_FOLDER, new_json)
-                            os.rename(old_json_path, new_json_path)
-                            break
-
-                        old_csv = old_filename.replace('video_', prefix).replace('uploaded_', prefix).replace('failed_upload_', prefix).replace('.mp4', '.csv')
-                        old_csv_path = os.path.join(RECORD_FOLDER, old_csv)
-                        if os.path.exists(old_csv_path):
-                            new_csv = new_filename.replace('video_', prefix).replace('uploaded_', prefix).replace('failed_upload_', prefix).replace('.mp4', '.csv')
-                            new_csv_path = os.path.join(RECORD_FOLDER, new_csv)
-                            os.rename(old_csv_path, new_csv_path)
-                            break
-
-                elif ext == 'h264':
-                    if 'incomplete_' in old_filename:
-                        old_json = old_filename.replace('incomplete_', 'incomplete_gps_').replace('.h264', '.json')
-                    else:
-                        old_json = old_filename.replace('temp_', 'gps_').replace('.h264', '.json')
-                    old_json_path = os.path.join(RECORD_FOLDER, old_json)
-                    if os.path.exists(old_json_path):
-                        if 'incomplete_' in new_filename:
-                            new_json = new_filename.replace('incomplete_', 'incomplete_gps_').replace('.h264', '.json')
-                        else:
-                            new_json = new_filename.replace('temp_', 'gps_').replace('.h264', '.json')
-                        new_json_path = os.path.join(RECORD_FOLDER, new_json)
-                        os.rename(old_json_path, new_json_path)
-
-                    if 'incomplete_' in old_filename:
-                        old_csv = old_filename.replace('incomplete_', 'incomplete_gps_').replace('.h264', '.csv')
-                    else:
-                        old_csv = old_filename.replace('temp_', 'gps_').replace('.h264', '.csv')
-                    old_csv_path = os.path.join(RECORD_FOLDER, old_csv)
-                    if os.path.exists(old_csv_path):
-                        if 'incomplete_' in new_filename:
-                            new_csv = new_filename.replace('incomplete_', 'incomplete_gps_').replace('.h264', '.csv')
-                        else:
-                            new_csv = new_filename.replace('temp_', 'gps_').replace('.h264', '.csv')
-                        new_csv_path = os.path.join(RECORD_FOLDER, new_csv)
-                        os.rename(old_csv_path, new_csv_path)
-
-        return jsonify({"success": True, "renamed_count": renamed_count, "new_base": f"video_{new_name}"})
-
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-@app.route('/api/list_media')
-def list_media():
-    v = glob.glob(os.path.join(RECORD_FOLDER, "video_*.mp4"))
-    v += glob.glob(os.path.join(RECORD_FOLDER, "failed_upload_*.mp4"))
-    v += glob.glob(os.path.join(RECORD_FOLDER, "uploaded_*.mp4"))
-    temp = glob.glob(os.path.join(RECORD_FOLDER, "temp_*.h264"))
-    incomplete = glob.glob(os.path.join(RECORD_FOLDER, "incomplete_*.h264"))
-    i = glob.glob(os.path.join(RECORD_FOLDER, "img_*.jpg"))
-
-    files = sorted(v + i + temp + incomplete, key=os.path.getmtime, reverse=True)
-
-    groups = {}
-    standalone = []
-
-    for f in files:
-        n = os.path.basename(f)
-        try:
-            s = round(os.path.getsize(f)/(1024*1024), 2)
-        except:
-            s = 0
-
-        is_failed = n.startswith('failed_upload_')
-        is_converting_h264 = n.startswith('temp_') and n.endswith('.h264')
-        is_incomplete = n.startswith('incomplete_') and n.endswith('.h264')
-        is_uploaded = n.startswith('uploaded_')
-        is_video = ("video" in n or "failed" in n or "temp" in n or "uploaded" in n or "incomplete" in n)
-
-        mp4_name = n.replace('temp_', 'video_').replace('incomplete_', 'video_').replace('.h264', '.mp4')
-        with converting_files_lock:
-            is_converting_mp4 = mp4_name in converting_files
-
-        upload_info = None
-        with upload_status_lock:
-            if n in upload_status:
-                upload_info = upload_status[n]
-
-        file_obj = {
-            "name": n,
-            "type": "video" if is_video else "image",
-            "size": s,
-            "failed": is_failed,
-            "converting": is_converting_h264 or is_converting_mp4,
-            "incomplete": is_incomplete,
-            "uploaded": is_uploaded,
-            "upload_status": upload_info
-        }
-
-        if "_chunk" in n and is_video:
-            ts = extract_timestamp(n)
-            if ts:
-                if ts not in groups:
-                    groups[ts] = {
-                        "base": f"video_{ts}",
-                        "timestamp": ts,
-                        "chunks": [],
-                        "total_size": 0,
-                        "chunk_count": 0,
-                        "type": "batch",
-                        "uploaded_count": 0,
-                        "failed_count": 0,
-                        "converting_count": 0,
-                        "incomplete_count": 0
-                    }
-
-                groups[ts]["chunks"].append(file_obj)
-                groups[ts]["total_size"] += s
-                groups[ts]["chunk_count"] += 1
-                if is_uploaded:
-                    groups[ts]["uploaded_count"] += 1
-                if is_failed:
-                    groups[ts]["failed_count"] += 1
-                if is_converting_h264 or is_converting_mp4:
-                    groups[ts]["converting_count"] += 1
-                if is_incomplete:
-                    groups[ts]["incomplete_count"] += 1
-            else:
-                standalone.append(file_obj)
-        else:
-            standalone.append(file_obj)
-
-    result = []
-    for ts, group in sorted(groups.items(), reverse=True):
-        result.append(group)
-    result.extend(standalone)
-
-    return jsonify(result)
-
-@app.route('/api/get_gps_data/<filename>')
-def get_gps_data(filename):
-    json_path = _find_existing_gps_json_for_video(filename)
-    if json_path:
-        pts = _load_gps_json_points(json_path)
-        if not pts:
-            return jsonify({"error": "No valid GPS data"})
-        return jsonify({
-            "points": pts,
-            "start": pts[0] if pts else None,
-            "end": pts[-1] if pts else None
-        })
-
-    csv_variations = [
-        filename.replace('video_', 'gps_').replace('.mp4', '.csv'),
-        filename.replace('uploaded_', 'gps_').replace('.mp4', '.csv'),
-        filename.replace('uploaded_', 'uploaded_gps_').replace('.mp4', '.csv'),
-        filename.replace('failed_upload_', 'gps_').replace('.mp4', '.csv'),
-        filename.replace('failed_upload_', 'failed_upload_gps_').replace('.mp4', '.csv'),
-    ]
-
-    csv_path = None
-    for csv_name in csv_variations:
-        test_path = os.path.join(RECORD_FOLDER, csv_name)
-        if os.path.exists(test_path):
-            csv_path = test_path
-            break
-
-    if not csv_path:
-        return jsonify({"error": "GPS data not found"})
-
-    try:
-        gps_points = []
-        with open(csv_path, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                try:
-                    lat = float(row['Lat'])
-                    lon = float(row['Lon'])
-                    if lat != 0.0 or lon != 0.0:
-                        gps_points.append({
-                            "lat": lat,
-                            "lon": lon,
-                            "timestamp": row['Timestamp']
-                        })
-                except:
-                    continue
-
-        if not gps_points:
-            return jsonify({"error": "No valid GPS data"})
-
-        return jsonify({
-            "points": gps_points,
-            "start": gps_points[0] if gps_points else None,
-            "end": gps_points[-1] if gps_points else None
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-def _gps_payload_from_video(filename):
-    json_path = _find_existing_gps_json_for_video(filename)
-    if not json_path:
-        return None, None, None
-
-    try:
-        with open(json_path, "r") as jf:
-            raw = jf.read()
-        data = json.loads(raw)
-        pts = data.get("points", [])
-        if not isinstance(pts, list):
-            pts = []
-
-        valid_pts = []
-        for p in pts:
-            try:
-                lat = float(p.get("lat", 0.0))
-                lon = float(p.get("lon", 0.0))
-                ts = p.get("timestamp", "")
-                if (lat != 0.0 or lon != 0.0) and ts:
-                    valid_pts.append({"lat": lat, "lon": lon, "timestamp": ts})
-            except:
-                continue
-
-        if not valid_pts:
-            return raw, None, None
-
-        start = valid_pts[0]
-        end = valid_pts[-1]
-        start_location = f"{start['lat']},{start['lon']}"
-        stop_location = f"{end['lat']},{end['lon']}"
-        return raw, start_location, stop_location
-    except:
-        return None, None, None
-
-@app.route('/api/upload_cloud', methods=['POST'])
-def api_upload_cloud():
-    try:
-        data = request.json or {}
-        filename = data.get('filename')
-        if not filename:
-            return jsonify({"success": False, "error": "No filename"})
-
-        with upload_status_lock:
-            upload_status[filename] = {"status": "uploading", "message": "Uploading..."}
-
-        video_path = os.path.join(RECORD_FOLDER, filename)
-
-        gps_json_string, start_location, stop_location = _gps_payload_from_video(filename)
-        if gps_json_string is None:
-            gps_json_string = ""
-
-        def upload_thread():
-            success, message = upload_to_cloud(
-                video_path=video_path,
-                device_id=DEVICE_ID,
-                start_location=start_location,
-                stop_location=stop_location,
-                location_json_string=gps_json_string
-            )
-
-            with upload_status_lock:
-                if success:
-                    upload_status[filename] = {"status": "success", "message": message}
-                    try:
-                        uploaded_name = filename.replace('video_', 'uploaded_')
-                        new_path = os.path.join(RECORD_FOLDER, uploaded_name)
-                        if os.path.exists(video_path):
-                            os.rename(video_path, new_path)
-
-                        json_path = _find_existing_gps_json_for_video(filename)
-                        if json_path and os.path.exists(json_path):
-                            base = os.path.basename(json_path)
-                            uploaded_json = base.replace('gps_', 'uploaded_gps_')
-                            os.rename(json_path, os.path.join(RECORD_FOLDER, uploaded_json))
-                    except Exception as e:
-                        logging.error(f"[UPLOAD] Rename failed: {e}")
-
-                    threading.Timer(3.0, lambda: upload_status.pop(filename, None)).start()
-                else:
-                    upload_status[filename] = {"status": "failed", "message": message}
-                    try:
-                        failed_name = filename.replace('video_', 'failed_upload_')
-                        new_path = os.path.join(RECORD_FOLDER, failed_name)
-                        if os.path.exists(video_path):
-                            os.rename(video_path, new_path)
-
-                        json_path = _find_existing_gps_json_for_video(filename)
-                        if json_path and os.path.exists(json_path):
-                            base = os.path.basename(json_path)
-                            failed_json = base.replace('gps_', 'failed_upload_gps_')
-                            os.rename(json_path, os.path.join(RECORD_FOLDER, failed_json))
-                    except Exception as e:
-                        logging.error(f"[UPLOAD] Rename failed: {e}")
-
-        t = threading.Thread(target=upload_thread)
-        t.daemon = True
-        t.start()
-
-        return jsonify({"success": True, "message": "Upload started"})
-
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-@app.route('/api/batch_upload', methods=['POST'])
-def batch_upload():
-    try:
-        data = request.json or {}
-        base = data.get('base')
-        if not base:
-            return jsonify({"success": False, "error": "No base provided"})
-
-        ts = extract_timestamp(base)
-        if not ts:
-            return jsonify({"success": False, "error": "Cannot extract timestamp"})
-
-        chunks = glob.glob(os.path.join(RECORD_FOLDER, f"video_{ts}_chunk*.mp4"))
-        chunks = sorted(chunks)
-
-        def batch_upload_thread():
-            for chunk_path in chunks:
-                chunk_name = os.path.basename(chunk_path)
-
-                with upload_status_lock:
-                    upload_status[chunk_name] = {"status": "uploading", "message": "Uploading..."}
-
-                gps_json_string, start_location, stop_location = _gps_payload_from_video(chunk_name)
-                if gps_json_string is None:
-                    gps_json_string = ""
-
-                success, message = upload_to_cloud(
-                    video_path=chunk_path,
-                    device_id=DEVICE_ID,
-                    start_location=start_location,
-                    stop_location=stop_location,
-                    location_json_string=gps_json_string
-                )
-
-                with upload_status_lock:
-                    if success:
-                        upload_status[chunk_name] = {"status": "success", "message": message}
-                        try:
-                            uploaded_name = chunk_name.replace('video_', 'uploaded_')
-                            new_path = os.path.join(RECORD_FOLDER, uploaded_name)
-                            if os.path.exists(chunk_path):
-                                os.rename(chunk_path, new_path)
-
-                            json_path = _find_existing_gps_json_for_video(chunk_name)
-                            if json_path and os.path.exists(json_path):
-                                basej = os.path.basename(json_path)
-                                uploaded_json = basej.replace('gps_', 'uploaded_gps_')
-                                os.rename(json_path, os.path.join(RECORD_FOLDER, uploaded_json))
-                        except Exception as e:
-                            logging.error(f"[BATCH] Rename failed: {e}")
-                    else:
-                        upload_status[chunk_name] = {"status": "failed", "message": message}
-                        try:
-                            failed_name = chunk_name.replace('video_', 'failed_upload_')
-                            new_path = os.path.join(RECORD_FOLDER, failed_name)
-                            if os.path.exists(chunk_path):
-                                os.rename(chunk_path, new_path)
-
-                            json_path = _find_existing_gps_json_for_video(chunk_name)
-                            if json_path and os.path.exists(json_path):
-                                basej = os.path.basename(json_path)
-                                failed_json = basej.replace('gps_', 'failed_upload_gps_')
-                                os.rename(json_path, os.path.join(RECORD_FOLDER, failed_json))
-                        except Exception as e:
-                            logging.error(f"[BATCH] Rename failed: {e}")
-
-                time.sleep(1)
-
-        t = threading.Thread(target=batch_upload_thread)
-        t.daemon = True
-        t.start()
-
-        return jsonify({"success": True, "message": f"Batch upload started for {len(chunks)} chunks"})
-
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-@app.route('/api/download/<filename>')
-def download(filename):
-    return send_from_directory(RECORD_FOLDER, filename, as_attachment=True)
-
-@app.route('/api/delete_file', methods=['POST'])
-def delete_file():
-    n = (request.json or {}).get('filename', '')
-    p = os.path.join(RECORD_FOLDER, n)
-    if os.path.exists(p) and RECORD_FOLDER in os.path.abspath(p):
-        os.remove(p)
-
-        variations = [
-            n.replace("video_", "gps_"),
-            n.replace("uploaded_", "uploaded_gps_"),
-            n.replace("failed_upload_", "failed_upload_gps_"),
-            n.replace("temp_", "gps_"),
-            n.replace("incomplete_", "incomplete_gps_"),
-            n.replace("img_", "gps_"),
-        ]
-
-        for base in variations:
-            for ext in [".json", ".csv"]:
-                gps_name = base.replace(".mp4", ext).replace(".jpg", ext).replace(".h264", ext)
-                gps_path = os.path.join(RECORD_FOLDER, gps_name)
-                if os.path.exists(gps_path):
-                    os.remove(gps_path)
-                    break
-
-        return "OK"
-    return "ERROR"
-
-@app.route('/api/delete_batch', methods=['POST'])
-def delete_batch():
-    try:
-        data = request.json or {}
-        base = data.get('base')
-        if not base:
-            return jsonify({"success": False, "error": "No base"})
-
-        ts = extract_timestamp(base)
-        if not ts:
-            return jsonify({"success": False, "error": "Cannot extract timestamp"})
-
-        chunks = glob.glob(os.path.join(RECORD_FOLDER, f"*{ts}_chunk*.mp4"))
-        chunks += glob.glob(os.path.join(RECORD_FOLDER, f"*{ts}_chunk*.h264"))
-
-        gps_jsons = glob.glob(os.path.join(RECORD_FOLDER, f"*gps_{ts}_chunk*.json"))
-        gps_csvs = glob.glob(os.path.join(RECORD_FOLDER, f"*gps_{ts}_chunk*.csv"))
-        gps_csvs += glob.glob(os.path.join(RECORD_FOLDER, f"*{ts}_chunk*.csv"))
-
-        for f in chunks + gps_jsons + gps_csvs:
-            if os.path.exists(f) and RECORD_FOLDER in os.path.abspath(f):
-                os.remove(f)
-
-        return jsonify({"success": True, "message": f"Deleted {len(chunks)} chunks"})
-
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-@app.route('/data/<filename>')
-def serve(filename):
-    return send_from_directory(RECORD_FOLDER, filename)
-
-if __name__ == '__main__':
-    from werkzeug.serving import WSGIRequestHandler
-    WSGIRequestHandler.protocol_version = "HTTP/1.1"
-
-    recover_orphaned_files()
-    generate_ssl_certificates()
-
-    threading.Thread(target=discovery_service, daemon=True).start()
-    threading.Thread(target=camera_worker, daemon=True).start()
-
-    try:
-        app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        app_running = False
-        stop_audio_recording()
+            parts = s.split(";")
+            kv = {}
+            for p in parts:
+                if "=" in p:
+                    k, v = p.split("=", 1)
+                    kv[k.strip().lower()] = v.strip()
+            ssid = kv.get("ssid")
+            password = kv.get("password", "")
+            if ssid:
+                return ssid, password
+        except Exception:
+            pass
+
+    return None, None
+
+
+def nmcli_disconnect():
+    r = run(["nmcli", "dev", "disconnect", WLAN_IFACE], timeout=15)
+    ok = (r.returncode == 0)
+    msg = ((r.stdout or "") + (r.stderr or "")).strip()
+    return ok, msg
+
+
+def nmcli_connect(ssid: str, password: str):
+    run(["nmcli", "radio", "wifi", "on"], timeout=10)
+    if password:
+        r = run(["nmcli", "dev", "wifi", "connect", ssid, "password", password, "ifname", WLAN_IFACE], timeout=50)
+    else:
+        r = run(["nmcli", "dev", "wifi", "connect", ssid, "ifname", WLAN_IFACE], timeout=50)
+
+    ok = (r.returncode == 0)
+    msg = ((r.stdout or "") + (r.stderr or "")).strip()
+    return ok, msg
+
+
+def countdown(seconds: int, prefix: str):
+    for i in range(seconds, 0, -1):
+        logging.info(f"{prefix} in {i}...")
         time.sleep(1)
+
+
+def launch_main_py():
+    logging.info("[BOOT] Launching main.py now...")
+    os.execv("/usr/bin/python3", ["/usr/bin/python3", MAIN_PY_PATH])
+
+
+def draw_overlay(bgr, ssid_now: str, msg: str):
+    y = 30
+    cv2.putText(bgr, "SmartHelmet QR Provisioning", (20, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
+    y += 30
+    cv2.putText(bgr, f"Current SSID: {ssid_now or 'None'}", (20, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.60, (255, 255, 255), 2)
+    y += 30
+    cv2.putText(bgr, msg, (20, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 255, 255), 2)
+    y += 30
+    cv2.putText(bgr, "Press 'q' to quit", (20, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 2)
+
+
+def init_camera_like_main():
+    """
+    Exact same camera configuration style as main.py:
+      - create_video_configuration(main YUV420, lores YUV420)
+      - Transform(hflip=True, vflip=True)
+      - controls FrameRate=FPS
+      - buffer_count=6
+      - sensor output size override
+      - ScalerCrop to full sensor
+    """
+    picam2 = Picamera2()
+    config = picam2.create_video_configuration(
+        main={"size": (CAM_WIDTH, CAM_HEIGHT), "format": "YUV420"},
+        lores={"size": (640, 480), "format": "YUV420"},
+        transform=Transform(hflip=True, vflip=True),
+        controls={"FrameRate": FPS},
+        buffer_count=6
+    )
+    config["sensor"]["output_size"] = (CAM_WIDTH, CAM_HEIGHT)
+    picam2.configure(config)
+    picam2.start()
+    picam2.set_controls({"ScalerCrop": (0, 0, 3280, 2464)})
+    time.sleep(0.5)
+    return picam2
+
+
+def main():
+    if which("nmcli") is None:
+        logging.critical("[FATAL] nmcli not found.")
+        raise SystemExit(1)
+
+    if not os.path.exists(MAIN_PY_PATH):
+        logging.critical(f"[FATAL] main.py not found at: {MAIN_PY_PATH}")
+        raise SystemExit(1)
+
+    picam2 = init_camera_like_main()
+
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW_NAME, 900, 650)
+
+    logging.info("[QR] Scanner running.")
+    ssid = get_current_ssid()
+
+    # Behavior requested:
+    # If connected to IGNORE_SSID, keep scanning (do NOT start main).
+    if ssid and ssid != IGNORE_SSID:
+        logging.info(f"[WIFI] Connected to SSID: {ssid}. Launching main.py ...")
+        launch_main_py()
+
+    logging.info(f"[WIFI] Current SSID: {ssid or 'None'}. IGNORE_SSID={IGNORE_SSID}. Keeping scan mode.")
+
+    last_payload = None
+    last_time = 0.0
+
+    try:
+        while True:
+            # EXACT same frame pipeline as main.py: capture lores + YUV->BGR conversion
+            raw_yuv = picam2.capture_array("lores")
+            if raw_yuv is None:
+                time.sleep(0.02)
+                continue
+
+            bgr = cv2.cvtColor(raw_yuv, cv2.COLOR_YUV2BGR_I420)
+
+            ssid_now = get_current_ssid()
+            draw_overlay(bgr, ssid_now, f"Show Wi-Fi QR. Will switch from {IGNORE_SSID}.")
+
+            decoded = zbar_decode(bgr)
+            if decoded:
+                payload = decoded[0].data.decode("utf-8", errors="ignore").strip()
+
+                now = time.time()
+                if payload == last_payload and (now - last_time) < 2:
+                    pass
+                else:
+                    last_payload = payload
+                    last_time = now
+
+                    target_ssid, target_pass = parse_wifi_qr(payload)
+                    if not target_ssid:
+                        logging.warning(f"[QR] Detected but unsupported QR: {payload[:120]}")
+                    else:
+                        logging.info("--------------------------------------------------")
+                        logging.info("[QR] Found credentials:")
+                        logging.info(f"     SSID: {target_ssid}")
+                        logging.info(f"     PASS: {target_pass}")
+                        logging.info("--------------------------------------------------")
+
+                        countdown(COUNTDOWN_BEFORE_SWITCH, "[WIFI] Switching network")
+
+                        okd, msgd = nmcli_disconnect()
+                        logging.info(f"[WIFI] Disconnect: {'OK' if okd else 'WARN'} {msgd}")
+
+                        okc, msgc = nmcli_connect(target_ssid, target_pass)
+                        logging.info(f"[WIFI] Connect: {'OK' if okc else 'FAIL'} {msgc}")
+
+                        if not okc:
+                            logging.error("[WIFI] Connect failed. Back to scan.")
+                            time.sleep(RESCAN_DELAY_ON_FAIL)
+                        else:
+                            time.sleep(POST_CONNECT_WAIT)
+                            okv, ssid_ver = verify_connected(expected_ssid=target_ssid)
+                            if okv:
+                                logging.info(f"[WIFI] Verified connected to: {ssid_ver}")
+                                launch_main_py()
+                                return
+                            else:
+                                logging.error(f"[WIFI] Not verified. Current SSID={ssid_ver}. Back to scan.")
+                                time.sleep(RESCAN_DELAY_ON_FAIL)
+
+            cv2.imshow(WINDOW_NAME, bgr)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
+                break
+
+    finally:
+        try:
+            picam2.stop()
+        except Exception:
+            pass
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()
