@@ -5,20 +5,28 @@ import json
 import time
 import subprocess
 import logging
+import threading
 
 import cv2
 from picamera2 import Picamera2
 from libcamera import Transform
 from pyzbar.pyzbar import decode as zbar_decode
 
+import RPi.GPIO as GPIO
+
 # -------------------- CONFIG --------------------
-IGNORE_SSID = "PSRVJ"          # if connected to this, keep scanning (don't start main.py)
+IGNORE_SSID = "PSRVJ"
 WLAN_IFACE = "wlan0"
 MAIN_PY_PATH = os.path.join(os.path.dirname(__file__), "main.py")
 
 # Match main.py camera settings
 CAM_WIDTH, CAM_HEIGHT = 1640, 1232
 FPS = 30.0
+
+# LED (GPIO 25)
+LED_PIN = 17
+LED_FAST_PERIOD = 0.15   # seconds (fast blink)
+LED_SLOW_PERIOD = 0.8    # seconds (slow blink)
 
 # UX
 COUNTDOWN_BEFORE_SWITCH = 5
@@ -31,7 +39,75 @@ WINDOW_NAME = "SmartHelmet QR Provisioning"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def run(cmd, timeout=40):
+# -------------------- LED CONTROL --------------------
+class LedController:
+    def __init__(self, pin: int):
+        self.pin = pin
+        self._mode = "off"       # off | on | blink_fast | blink_slow
+        self._stop = False
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(self.pin, GPIO.OUT)
+        GPIO.output(self.pin, GPIO.LOW)
+
+        self._thread.start()
+
+    def set_mode(self, mode: str):
+        with self._lock:
+            self._mode = mode
+
+    def stop(self):
+        self._stop = True
+        try:
+            self._thread.join(timeout=1)
+        except Exception:
+            pass
+        try:
+            GPIO.output(self.pin, GPIO.LOW)
+        except Exception:
+            pass
+        try:
+            GPIO.cleanup(self.pin)
+        except Exception:
+            pass
+
+    def _run(self):
+        state = False
+        while not self._stop:
+            with self._lock:
+                mode = self._mode
+
+            if mode == "off":
+                GPIO.output(self.pin, GPIO.LOW)
+                time.sleep(0.1)
+                continue
+
+            if mode == "on":
+                GPIO.output(self.pin, GPIO.HIGH)
+                time.sleep(0.1)
+                continue
+
+            if mode == "blink_fast":
+                state = not state
+                GPIO.output(self.pin, GPIO.HIGH if state else GPIO.LOW)
+                time.sleep(LED_FAST_PERIOD)
+                continue
+
+            if mode == "blink_slow":
+                state = not state
+                GPIO.output(self.pin, GPIO.HIGH if state else GPIO.LOW)
+                time.sleep(LED_SLOW_PERIOD)
+                continue
+
+            GPIO.output(self.pin, GPIO.LOW)
+            time.sleep(0.1)
+
+
+# -------------------- UTILS --------------------
+def run(cmd, timeout=50):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
@@ -134,9 +210,9 @@ def nmcli_disconnect():
 def nmcli_connect(ssid: str, password: str):
     run(["nmcli", "radio", "wifi", "on"], timeout=10)
     if password:
-        r = run(["nmcli", "dev", "wifi", "connect", ssid, "password", password, "ifname", WLAN_IFACE], timeout=50)
+        r = run(["nmcli", "dev", "wifi", "connect", ssid, "password", password, "ifname", WLAN_IFACE], timeout=60)
     else:
-        r = run(["nmcli", "dev", "wifi", "connect", ssid, "ifname", WLAN_IFACE], timeout=50)
+        r = run(["nmcli", "dev", "wifi", "connect", ssid, "ifname", WLAN_IFACE], timeout=60)
 
     ok = (r.returncode == 0)
     msg = ((r.stdout or "") + (r.stderr or "")).strip()
@@ -170,15 +246,6 @@ def draw_overlay(bgr, ssid_now: str, msg: str):
 
 
 def init_camera_like_main():
-    """
-    Exact same camera configuration style as main.py:
-      - create_video_configuration(main YUV420, lores YUV420)
-      - Transform(hflip=True, vflip=True)
-      - controls FrameRate=FPS
-      - buffer_count=6
-      - sensor output size override
-      - ScalerCrop to full sensor
-    """
     picam2 = Picamera2()
     config = picam2.create_video_configuration(
         main={"size": (CAM_WIDTH, CAM_HEIGHT), "format": "YUV420"},
@@ -204,6 +271,8 @@ def main():
         logging.critical(f"[FATAL] main.py not found at: {MAIN_PY_PATH}")
         raise SystemExit(1)
 
+    led = LedController(LED_PIN)
+
     picam2 = init_camera_like_main()
 
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
@@ -212,20 +281,21 @@ def main():
     logging.info("[QR] Scanner running.")
     ssid = get_current_ssid()
 
-    # Behavior requested:
-    # If connected to IGNORE_SSID, keep scanning (do NOT start main).
+    # If connected to something else, immediately start main.py (success mode)
     if ssid and ssid != IGNORE_SSID:
+        led.set_mode("blink_slow")
         logging.info(f"[WIFI] Connected to SSID: {ssid}. Launching main.py ...")
+        time.sleep(1)
         launch_main_py()
 
     logging.info(f"[WIFI] Current SSID: {ssid or 'None'}. IGNORE_SSID={IGNORE_SSID}. Keeping scan mode.")
+    led.set_mode("blink_fast")
 
     last_payload = None
     last_time = 0.0
 
     try:
         while True:
-            # EXACT same frame pipeline as main.py: capture lores + YUV->BGR conversion
             raw_yuv = picam2.capture_array("lores")
             if raw_yuv is None:
                 time.sleep(0.02)
@@ -250,7 +320,9 @@ def main():
                     target_ssid, target_pass = parse_wifi_qr(payload)
                     if not target_ssid:
                         logging.warning(f"[QR] Detected but unsupported QR: {payload[:120]}")
+                        led.set_mode("blink_fast")
                     else:
+                        led.set_mode("on")  # solid while switching
                         logging.info("--------------------------------------------------")
                         logging.info("[QR] Found credentials:")
                         logging.info(f"     SSID: {target_ssid}")
@@ -267,16 +339,20 @@ def main():
 
                         if not okc:
                             logging.error("[WIFI] Connect failed. Back to scan.")
+                            led.set_mode("blink_fast")
                             time.sleep(RESCAN_DELAY_ON_FAIL)
                         else:
                             time.sleep(POST_CONNECT_WAIT)
                             okv, ssid_ver = verify_connected(expected_ssid=target_ssid)
                             if okv:
                                 logging.info(f"[WIFI] Verified connected to: {ssid_ver}")
+                                led.set_mode("blink_slow")
+                                time.sleep(10)  # success indication before network cuts your VNC
                                 launch_main_py()
                                 return
                             else:
                                 logging.error(f"[WIFI] Not verified. Current SSID={ssid_ver}. Back to scan.")
+                                led.set_mode("blink_fast")
                                 time.sleep(RESCAN_DELAY_ON_FAIL)
 
             cv2.imshow(WINDOW_NAME, bgr)
@@ -293,6 +369,7 @@ def main():
             cv2.destroyAllWindows()
         except Exception:
             pass
+        led.stop()
 
 
 if __name__ == "__main__":
