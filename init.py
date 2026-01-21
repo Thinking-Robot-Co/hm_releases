@@ -812,6 +812,10 @@ def list_media():
             s = round(os.path.getsize(f)/(1024*1024), 2)
         except:
             s = 0
+        try:
+            mtime = os.path.getmtime(f)
+        except:
+            mtime = 0
 
         is_failed = n.startswith('failed_upload_')
         is_converting_h264 = n.startswith('temp_') and n.endswith('.h264')
@@ -836,7 +840,8 @@ def list_media():
             "converting": is_converting_h264 or is_converting_mp4,
             "incomplete": is_incomplete,
             "uploaded": is_uploaded,
-            "upload_status": upload_info
+            "upload_status": upload_info,
+            "last_modified": mtime
         }
 
         if "_chunk" in n and is_video:
@@ -853,7 +858,8 @@ def list_media():
                         "uploaded_count": 0,
                         "failed_count": 0,
                         "converting_count": 0,
-                        "incomplete_count": 0
+                        "incomplete_count": 0,
+                        "last_modified": 0
                     }
 
                 groups[ts]["chunks"].append(file_obj)
@@ -867,17 +873,17 @@ def list_media():
                     groups[ts]["converting_count"] += 1
                 if is_incomplete:
                     groups[ts]["incomplete_count"] += 1
+                if file_obj["last_modified"] > groups[ts]["last_modified"]:
+                    groups[ts]["last_modified"] = file_obj["last_modified"]
             else:
                 standalone.append(file_obj)
         else:
             standalone.append(file_obj)
 
-    result = []
-    for ts, group in sorted(groups.items(), reverse=True):
-        result.append(group)
-    result.extend(standalone)
+    combined = list(groups.values()) + standalone
+    combined_sorted = sorted(combined, key=lambda x: x.get("last_modified", 0), reverse=True)
 
-    return jsonify(result)
+    return jsonify(combined_sorted)
 
 @app.route('/api/get_gps_data/<filename>')
 def get_gps_data(filename):
@@ -1183,6 +1189,21 @@ def delete_batch():
 def serve(filename):
     return send_from_directory(RECORD_FOLDER, filename)
 
+@app.route('/api/shutdown', methods=['POST'])
+def shutdown():
+    try:
+        def _do_shutdown():
+            try:
+                subprocess.Popen(["sudo", "shutdown", "-h", "now"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                try:
+                    subprocess.Popen(["sudo", "poweroff"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+        threading.Thread(target=_do_shutdown, daemon=True).start()
+        return jsonify({"success": True, "message": "Shutdown initiated"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 if __name__ == '__main__':
     from werkzeug.serving import WSGIRequestHandler
     WSGIRequestHandler.protocol_version = "HTTP/1.1"
