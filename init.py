@@ -23,6 +23,7 @@ from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
 from libcamera import Transform
 from uploader import upload_to_cloud
+from uploader import upload_image_to_cloud
 
 VERSION = "v27.13-ULTIMATE"
 RECORD_FOLDER = "recordings"
@@ -1049,6 +1050,48 @@ def api_upload_cloud():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
+@app.route('/api/upload_image', methods=['POST'])
+def api_upload_image():
+    try:
+        data = request.json or {}
+        filename = data.get('filename')
+        if not filename:
+            return jsonify({"success": False, "error": "No filename"})
+        with upload_status_lock:
+            upload_status[filename] = {"status": "uploading", "message": "Uploading..."}
+        image_path = os.path.join(RECORD_FOLDER, filename)
+        def upload_thread():
+            success, message = upload_image_to_cloud(
+                image_path=image_path,
+                device_id=DEVICE_ID,
+                location_json_string=""
+            )
+            with upload_status_lock:
+                if success:
+                    upload_status[filename] = {"status": "success", "message": message}
+                    try:
+                        uploaded_name = filename.replace('img_', 'uploaded_img_')
+                        new_path = os.path.join(RECORD_FOLDER, uploaded_name)
+                        if os.path.exists(image_path):
+                            os.rename(image_path, new_path)
+                    except Exception as e:
+                        logging.error(f"[UPLOAD] Rename failed: {e}")
+                    threading.Timer(3.0, lambda: upload_status.pop(filename, None)).start()
+                else:
+                    upload_status[filename] = {"status": "failed", "message": message}
+                    try:
+                        failed_name = filename.replace('img_', 'failed_upload_img_')
+                        new_path = os.path.join(RECORD_FOLDER, failed_name)
+                        if os.path.exists(image_path):
+                            os.rename(image_path, new_path)
+                    except Exception as e:
+                        logging.error(f"[UPLOAD] Rename failed: {e}")
+        t = threading.Thread(target=upload_thread)
+        t.daemon = True
+        t.start()
+        return jsonify({"success": True, "message": "Upload started"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 @app.route('/api/batch_upload', methods=['POST'])
 def batch_upload():
     try:

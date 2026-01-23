@@ -123,3 +123,55 @@ def upload_to_cloud(
     except Exception as e:
         logging.exception("[UPLOAD] Unexpected error")
         return False, str(e)
+
+def upload_image_to_cloud(
+    *,
+    image_path: str,
+    device_id: str,
+    location_json_string: str = ""
+):
+    try:
+        if not os.path.exists(image_path):
+            return False, "Image file not found"
+        filename = os.path.basename(image_path)
+        start_time, end_time = _extract_times_from_filename(filename)
+        data = {
+            "device_id": device_id,
+            "file_type": "image",
+            "start_time": start_time,
+            "end_time": end_time,
+        }
+        if location_json_string is None:
+            location_json_string = ""
+        data["location"] = str(location_json_string)
+        headers = {"X-API-KEY": API_KEY}
+        with open(image_path, "rb") as f:
+            files = {
+                "image": (filename, f, "image/jpeg")
+            }
+            resp = requests.post(
+                UPLOAD_URL,
+                headers=headers,
+                files=files,
+                data=data,
+                timeout=180
+            )
+        try:
+            result = resp.json()
+        except Exception:
+            if resp.status_code == 200:
+                return True, "Upload successful"
+            return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+        if resp.status_code != 200:
+            msg = result.get("message") or f"HTTP {resp.status_code}"
+            return False, msg
+        if bool(result.get("success")):
+            return True, result.get("message") or "Upload successful"
+        return False, result.get("message") or "Upload failed"
+    except requests.exceptions.Timeout:
+        return False, "Timeout"
+    except requests.exceptions.ConnectionError:
+        return False, "Connection error"
+    except Exception as e:
+        logging.exception("[UPLOAD] Unexpected error")
+        return False, str(e)
