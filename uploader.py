@@ -64,6 +64,11 @@ def upload_to_cloud(
 
         filename = os.path.basename(video_path)
         start_time, end_time = _extract_times_from_filename(filename)
+        try:
+            mtime = os.path.getmtime(video_path)
+            end_time = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
 
         data = {
             "device_id": device_id,
@@ -135,6 +140,11 @@ def upload_image_to_cloud(
             return False, "Image file not found"
         filename = os.path.basename(image_path)
         start_time, end_time = _extract_times_from_filename(filename)
+        try:
+            mtime = os.path.getmtime(image_path)
+            end_time = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
         data = {
             "device_id": device_id,
             "file_type": "image",

@@ -801,6 +801,8 @@ def list_media():
     temp = glob.glob(os.path.join(RECORD_FOLDER, "temp_*.h264"))
     incomplete = glob.glob(os.path.join(RECORD_FOLDER, "incomplete_*.h264"))
     i = glob.glob(os.path.join(RECORD_FOLDER, "img_*.jpg"))
+    i += glob.glob(os.path.join(RECORD_FOLDER, "uploaded_img_*.jpg"))
+    i += glob.glob(os.path.join(RECORD_FOLDER, "failed_upload_img_*.jpg"))
 
     files = sorted(v + i + temp + incomplete, key=os.path.getmtime, reverse=True)
 
@@ -822,7 +824,8 @@ def list_media():
         is_converting_h264 = n.startswith('temp_') and n.endswith('.h264')
         is_incomplete = n.startswith('incomplete_') and n.endswith('.h264')
         is_uploaded = n.startswith('uploaded_')
-        is_video = ("video" in n or "failed" in n or "temp" in n or "uploaded" in n or "incomplete" in n)
+        ext = os.path.splitext(n)[1].lower()
+        is_video = ext in ('.mp4', '.h264')
 
         mp4_name = n.replace('temp_', 'video_').replace('incomplete_', 'video_').replace('.h264', '.mp4')
         with converting_files_lock:
