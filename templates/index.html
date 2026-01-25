@@ -317,7 +317,6 @@ function renderBatchGroup(batch) {
                 </div>
                 <div class="chunk-actions">
                     ${canUpload ? `<button class="chunk-btn chunk-btn-upload" onclick="event.stopPropagation(); uploadFile('${chunk.name}')">☁️ Upload</button>` : ''}
-                    <button class="chunk-btn chunk-btn-download" onclick="event.stopPropagation(); window.location.href='/api/download/${chunk.name}'">⬇️ Download</button>
                 </div>
             </div>`;
         }
@@ -354,9 +353,6 @@ function renderBatchGroup(batch) {
                     `<button class="action-btn btn-upload" onclick="event.stopPropagation(); uploadFile('${item.name}')">☁️ Upload</button>` : ''}
                 ${(item.type === 'image' && !item.uploaded) ? 
                     `<button class="action-btn btn-upload" onclick="event.stopPropagation(); uploadImage('${item.name}')">☁️ Upload</button>` : ''}
-                
-                <button class="action-btn btn-download" onclick="event.stopPropagation(); window.location.href='/api/download/${item.name}'">⬇️ Download</button>
-                <button class="action-btn btn-download" onclick="event.stopPropagation(); window.location.href='/api/download/${item.name}'">⬇️ Download</button>
                 
                 ${(item.type === 'video' && !item.converting) ? 
                     `<button class="action-btn btn-rename" onclick="event.stopPropagation(); showRenameModal('${item.name}')">✏️ Rename</button>` : ''}
@@ -522,7 +518,7 @@ function renderBatchGroup(batch) {
         if(!confirm('Power off the device now?')) return;
         const btn = document.getElementById('btnShutdown');
         btn.disabled = true;
-        btn.textContent = 'Shutting down...';
+            btn.textContent = 'Shutting down...';
         fetch('/api/shutdown', {method:'POST'}).then(r=>r.json()).then(d=>{
             if(d && d.success){
                 alert('Shutdown initiated. The device will power off shortly.');
@@ -533,7 +529,7 @@ function renderBatchGroup(batch) {
             alert('Failed to initiate shutdown');
         }).finally(()=>{
             btn.disabled = false;
-            btn.textContent = '⏻ POWER OFF';
+            btn.textContent = 'Shutdown';
         });
     }
     function deleteBatch(base) {
@@ -1017,7 +1013,7 @@ function renderBatchGroup(batch) {
         <div class="controls-top">
             <button id="btnRecord" class="btn btn-record" onclick="toggleRecord()">REC VIDEO</button>
             <button id="btnAudio" class="btn-audio-toggle" onclick="toggleAudio()">🎤</button>
-            <button id="btnShutdown" class="btn btn-shutdown" onclick="shutdownDevice()">⏻ POWER OFF</button>
+            <button id="btnShutdown" class="btn btn-shutdown" onclick="shutdownDevice()">Shutdown</button>
         </div>
         <button class="btn btn-photo" onclick="capturePhoto()">📷 CAPTURE PHOTO</button>
     </div>
@@ -1051,7 +1047,6 @@ function renderBatchGroup(batch) {
             <img id="photoPreview" src="" style="width: 100%; border-radius: 12px;">
             <div style="display:flex; gap:8px; margin-top:12px;">
                 <button class="action-btn btn-upload" onclick="uploadImage(document.getElementById('photoTitle').textContent)">☁️ Upload</button>
-                <button class="action-btn btn-download" onclick="window.location.href='/api/download/'+document.getElementById('photoTitle').textContent">⬇️ Download</button>
             </div>
         </div>
     </div>
