@@ -14,6 +14,7 @@ import glob
 import socket
 import shutil
 import logging
+import logging.handlers
 import re
 import cv2
 import numpy as np
@@ -27,6 +28,7 @@ from uploader import upload_image_to_cloud
 
 VERSION = "v27.13-ULTIMATE"
 RECORD_FOLDER = "recordings"
+LOG_DIR = "logs"
 PORT = 5001
 CAM_WIDTH, CAM_HEIGHT = 1640, 1232
 FPS = 30.0
@@ -77,6 +79,14 @@ werkzeug_logger.addFilter(SuppressedLogFilter())
 
 if not os.path.exists(RECORD_FOLDER):
     os.makedirs(RECORD_FOLDER)
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
+
+root_logger = logging.getLogger()
+file_handler = logging.handlers.RotatingFileHandler(os.path.join(LOG_DIR, "app.log"), maxBytes=2*1024*1024, backupCount=5)
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+root_logger.addHandler(file_handler)
 
 app = Flask(__name__)
 
@@ -1250,6 +1260,31 @@ def shutdown():
         return jsonify({"success": True, "message": "Shutdown initiated"})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
+
+@app.route('/api/list_logs')
+def list_logs():
+    try:
+        files = []
+        for n in os.listdir(LOG_DIR):
+            p = os.path.join(LOG_DIR, n)
+            if os.path.isfile(p):
+                try:
+                    s = round(os.path.getsize(p)/(1024*1024), 2)
+                except:
+                    s = 0
+                try:
+                    mtime = os.path.getmtime(p)
+                except:
+                    mtime = 0
+                files.append({"name": n, "size_mb": s, "last_modified": mtime})
+        files = sorted(files, key=lambda x: x["last_modified"], reverse=True)
+        return jsonify(files)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+@app.route('/api/download_log/<filename>')
+def download_log(filename):
+    return send_from_directory(LOG_DIR, filename, as_attachment=True)
 if __name__ == '__main__':
     from werkzeug.serving import WSGIRequestHandler
     WSGIRequestHandler.protocol_version = "HTTP/1.1"

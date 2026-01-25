@@ -157,7 +157,7 @@ def upload_image_to_cloud(
         headers = {"X-API-KEY": API_KEY}
         with open(image_path, "rb") as f:
             files = {
-                "image": (filename, f, "image/jpeg")
+                "video": (filename, f, "image/jpeg")
             }
             resp = requests.post(
                 UPLOAD_URL,
