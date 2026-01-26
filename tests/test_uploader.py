@@ -82,7 +82,9 @@ def run_image_upload_test():
     ok, msg = uploader.upload_image_to_cloud(
         image_path=image_path,
         device_id="test-device",
-        location_json_string=""
+        start_location="18.2,72.2",
+        stop_location="18.2,72.2",
+        location_json_string='{"points":[{"lat":18.2,"lon":72.2}]}'
     )
 
     print("IMAGE ok:", ok, "msg:", msg)
@@ -92,6 +94,7 @@ def run_image_upload_test():
     assert "video" in captured["files"], "Multipart key should be 'video' for image uploads (server compatibility)"
     assert captured["data"]["file_type"] == "image"
     assert "start_time" in captured["data"] and "end_time" in captured["data"]
+    assert "start_location" in captured["data"] and "stop_location" in captured["data"]
 
 
 if __name__ == "__main__":
