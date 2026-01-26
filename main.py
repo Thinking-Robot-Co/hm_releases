@@ -18,7 +18,6 @@ import RPi.GPIO as GPIO
 IGNORE_SSID = "PSRVJ"
 WLAN_IFACE = "wlan0"
 INIT_PY_PATH = os.path.join(os.path.dirname(__file__), "init.py")
-
 # Match main.py camera settings
 CAM_WIDTH, CAM_HEIGHT = 1640, 1232
 FPS = 30.0
@@ -283,7 +282,7 @@ def main():
 
     # If connected to something else, immediately start main.py (success mode)
     if ssid and ssid != IGNORE_SSID:
-        led.set_mode("blink_slow")
+        led.set_mode("on")
         logging.info(f"[WIFI] Connected to SSID: {ssid}. Launching main.py ...")
         time.sleep(1)
         launch_main_py()
@@ -346,7 +345,7 @@ def main():
                             okv, ssid_ver = verify_connected(expected_ssid=target_ssid)
                             if okv:
                                 logging.info(f"[WIFI] Verified connected to: {ssid_ver}")
-                                led.set_mode("blink_slow")
+                                led.set_mode("on")
                                 time.sleep(10)  # success indication before network cuts your VNC
                                 launch_main_py()
                                 return

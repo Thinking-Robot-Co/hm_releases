@@ -133,6 +133,8 @@ def upload_image_to_cloud(
     *,
     image_path: str,
     device_id: str,
+    start_location: str = None,
+    stop_location: str = None,
     location_json_string: str = ""
 ):
     try:
@@ -151,6 +153,10 @@ def upload_image_to_cloud(
             "start_time": start_time,
             "end_time": end_time,
         }
+        if start_location:
+            data["start_location"] = str(start_location)
+        if stop_location:
+            data["stop_location"] = str(stop_location)
         if location_json_string is None:
             location_json_string = ""
         data["location"] = str(location_json_string)

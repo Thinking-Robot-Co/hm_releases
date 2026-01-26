@@ -1074,10 +1074,27 @@ def api_upload_image():
             upload_status[filename] = {"status": "uploading", "message": "Uploading..."}
         image_path = os.path.join(RECORD_FOLDER, filename)
         def upload_thread():
+            try:
+                lat = float(current_gps_data.get("lat", 0.0))
+                lon = float(current_gps_data.get("lon", 0.0))
+            except Exception:
+                lat, lon = 0.0, 0.0
+            loc_str = f"{lat},{lon}"
+            location_json_string = json.dumps({
+                "points": [
+                    {
+                        "lat": lat,
+                        "lon": lon,
+                        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                ]
+            })
             success, message = upload_image_to_cloud(
                 image_path=image_path,
                 device_id=DEVICE_ID,
-                location_json_string=""
+                start_location=loc_str,
+                stop_location=loc_str,
+                location_json_string=location_json_string
             )
             with upload_status_lock:
                 if success:
